@@ -45,6 +45,37 @@ chmod +x setup-layer.sh
 ./setup-layer.sh
 ```
 
+setup-layer.sh는 Python 3.12버전을 사용하는 것을 명시하도록 pip3.12 명령어가 지정되어 있습니다. 이미 Python 3.12을 사용하고 있다면 아래와 같이 수정합니다. 
+
+```bash
+vi setup-layer.sh
+
+#!/bin/bash
+# setup-layers.sh
+
+# Requests Layer
+echo "Setting up requests layer..."
+mkdir -p layer/requests/python
+cd layer/requests/python
+pip3 install requests -t .
+cd ../../..
+
+# Networkx Layer
+echo "Setting up networkx layer..."
+mkdir -p layer/networkx/python
+cd layer/networkx/python
+pip3 install networkx numpy -t .
+cd ../../..
+
+# Clean up unnecessary files
+find layer -type d -name "__pycache__" -exec rm -rf {} +
+find layer -type d -name "*.dist-info" -exec rm -rf {} +
+find layer -type d -name "*.egg-info" -exec rm -rf {} +
+find layer -type f -name "*.pyc" -delete
+
+echo "Layer setup complete!"
+```
+
 
 ## 배포
 
