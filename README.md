@@ -112,7 +112,7 @@ aws secretsmanager update-secret \
   --secret-string '{"access_token":"xoxb-your-actual-token"}'
 ```
 
-4. 저장소의 종류에 따라 Parameter Store에 설정 값을 입력합니다.
+4. 사용하는 저장소의 종류에 따라 Parameter Store에 설정 값을 입력합니다.
 ```bash
 aws ssm put-parameter --name /pr-reviewer/config/repo_type --value <github | gitlab | bitbucket> --overwrite
 ```
