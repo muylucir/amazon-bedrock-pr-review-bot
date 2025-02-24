@@ -196,7 +196,7 @@ Detected Patterns:
             })
 
             response = self.bedrock.invoke_model(
-                modelId=self.config.get('model', 'anthropic.claude-3-5-sonnet-20241022-v2:0'),
+                modelId=self.config.get('model', 'apac.anthropic.claude-3-5-sonnet-20241022-v2:0'),
                 contentType='application/json',
                 accept='application/json',
                 body=body.encode()
