@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 class SlackConfig:
     token: str
     channel: str
+    notification: str
     max_retries: int = 3
     retry_delay: float = 1.0
 
