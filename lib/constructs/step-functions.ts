@@ -77,9 +77,7 @@ export class ReviewBotStepFunctions extends Construct {
     // 결과 병합 - 수정된 부분
     const mergeResults = new stepfunctions.Pass(this, 'MergeResults', {
       parameters: {
-        'originalResults.$': '$.classifiedResults.succeeded',
-        'retryResults.$': "States.ArrayGetItem($.retryResults, 0) || []", // 빈 배열 기본값
-        'allResults.$': "States.ArrayConcat($.classifiedResults.succeeded, States.ArrayGetItem($.retryResults, 0) || [])"
+        'allResults.$': "States.ArrayConcat($.classifiedResults.succeeded, $.retryResults)"
       },
       resultPath: '$.mergedResults'
     });
