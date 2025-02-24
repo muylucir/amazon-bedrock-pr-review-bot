@@ -16,6 +16,21 @@ export class ReviewBotStepFunctions extends Construct {
   constructor(scope: Construct, id: string, props: ReviewBotStepFunctionsProps) {
     super(scope, id);
 
+    // Success State
+    const success = new stepfunctions.Succeed(this, 'Success');
+
+    // Failed State
+    const failed = new stepfunctions.Fail(this, 'Failed', {
+      error: 'WorkflowFailed',
+      cause: 'Workflow execution failed'
+    });
+
+    // Handle Error Task
+    const handleError = new tasks.LambdaInvoke(this, 'HandleError', {
+      lambdaFunction: props.functions.handleError,
+      payloadResponseOnly: true,
+    });
+
     // Initial Processing Task
     const initialProcessing = new tasks.LambdaInvoke(this, 'InitialProcessing', {
       lambdaFunction: props.functions.initialProcessing,
@@ -78,8 +93,10 @@ export class ReviewBotStepFunctions extends Construct {
       }
     });
 
-    // Check for failed chunks
-    const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks');
+    // Define success passes
+    const prCommentSuccess = new stepfunctions.Pass(this, 'PRCommentSuccess');
+    const slackNotificationSuccess = new stepfunctions.Pass(this, 'SlackNotificationSuccess');
+    const noFailedChunks = new stepfunctions.Pass(this, 'NoFailedChunks');
 
     // Retry failed chunks Map state
     const retryFailedChunks = new stepfunctions.Map(this, 'RetryFailedChunks', {
@@ -92,24 +109,14 @@ export class ReviewBotStepFunctions extends Construct {
     });
     retryFailedChunks.iterator(processChunk);
 
+    // Check for failed chunks
+    const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks')
+      .when(stepfunctions.Condition.isPresent('$.failed_chunks[0]'), retryFailedChunks)
+      .otherwise(noFailedChunks);
+
     // Aggregate Results Task
     const aggregateResults = new tasks.LambdaInvoke(this, 'AggregateResults', {
       lambdaFunction: props.functions.aggregateResults,
-      payloadResponseOnly: true,
-    });
-
-    // Success State
-    const success = new stepfunctions.Succeed(this, 'Success');
-
-    // Failed State
-    const failed = new stepfunctions.Fail(this, 'Failed', {
-      error: 'WorkflowFailed',
-      cause: 'Workflow execution failed'
-    });
-
-    // Handle Error Task
-    const handleError = new tasks.LambdaInvoke(this, 'HandleError', {
-      lambdaFunction: props.functions.handleError,
       payloadResponseOnly: true,
     });
 
@@ -124,11 +131,6 @@ export class ReviewBotStepFunctions extends Construct {
       lambdaFunction: props.functions.sendSlackNotification,
       payloadResponseOnly: true,
     });
-
-    // Define success passes
-    const prCommentSuccess = new stepfunctions.Pass(this, 'PRCommentSuccess');
-    const slackNotificationSuccess = new stepfunctions.Pass(this, 'SlackNotificationSuccess');
-    const noFailedChunks = new stepfunctions.Pass(this, 'NoFailedChunks');
 
     // Post Results in parallel
     const postResults = new stepfunctions.Parallel(this, 'PostResults', {
@@ -149,11 +151,6 @@ export class ReviewBotStepFunctions extends Construct {
 
     postResults.branch(prCommentBranch);
     postResults.branch(slackNotificationBranch);
-
-    // Add paths to Choice states
-    checkFailedChunks
-      .when(stepfunctions.Condition.isPresent('$.failed_chunks[0]'), retryFailedChunks)
-      .otherwise(noFailedChunks);
 
     // Final status check
     const checkFinalStatus = new stepfunctions.Choice(this, 'CheckFinalStatus')
