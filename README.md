@@ -113,7 +113,7 @@ aws secretsmanager update-secret \
 1. 새로운 PR 또는 기존 PR 업데이트 검토
 2. Amazon Bedrock을 사용한 코드 변경 분석
 3. PR에 리뷰 코멘트 작성
-4. 설정된 Slack 채널로 요약 전송
+4. 설정된 Slack 채널로 요약 전송 (Slack 알림을 Disable 하려면 Parameter Store의 /pr-reviewer/config/slack_notification 값을 "disable"로 변경합니다.)
 
 [샘플 Report 보기](https://github.com/muylucir/amazon-bedrock-reviewbot/blob/main/docs/sample_report.md)
 

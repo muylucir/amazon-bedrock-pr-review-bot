@@ -5,6 +5,7 @@ export interface ReviewBotProps {
     maxTokens?: number;
     temperature?: number;
     slackChannel: string;
+    slackNotification: string;
   }
   
   export interface LambdaEnvironment {
