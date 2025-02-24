@@ -79,7 +79,7 @@ export class SecretsAndParameters extends Construct {
         description: 'Slack channel for notifications'
       }),
       slackNotification: new ssm.StringParameter(this, 'SlackNotification', {
-        parameterName: '/pr-reviewer/config/slacknotification',
+        parameterName: '/pr-reviewer/config/slack_notification',
         stringValue: props.slackNotification,
         description: 'Slack notifications Enable/Disable'
       })
