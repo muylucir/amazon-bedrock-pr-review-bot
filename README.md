@@ -3,8 +3,7 @@
 Amazon Bedrock을 활용해 생성된 Pull request에 대해 자동으로 Code review를 제공하는 애플리케이션입니다. 
 AWS CDK로 구축되었으며, GitHub, GitLab, Bitbucket과 통합되어 Slack 알림과 함께 상세한 코드 리뷰를 제공합니다.
 
-PR에 여러 파일이 포함될 때, 파일들 간의 관계를 고려하지 않고 개별적으로 분석하면 중요한 컨텍스트를 놓칠 수 있습니다. 
-Amazon Bedrock PR Review Bot은 파일 간의 관계를 분석하여 연관된 파일들을 함께 검토함으로써 더 정확하고 의미 있는 리뷰를 제공합니다.
+PR에 여러 파일이 포함될 때 Amazon Bedrock PR Review Bot은 파일 간의 관계를 분석하여 연관된 파일들을 함께 검토함으로써 더 정확하고 의미 있는 리뷰를 제공합니다.
 
 
 ```mermaid
