@@ -60,7 +60,7 @@ cdk deploy
 
 3. Secret Manager에 Token을 실제 값으로 Update (해당하는 Repository만 실행하면 됩니다.)
 ```bash
-# GitHub
+# GitHub : Personal access tokens (classic)만 지원합니다.
 aws secretsmanager update-secret \
   --secret-id /pr-reviewer/tokens/github \
   --secret-string '{"access_token":"input-your-actual-token"}'
