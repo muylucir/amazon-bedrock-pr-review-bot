@@ -16,7 +16,7 @@ Amazon Bedrock을 활용한 자동 PR 리뷰 서버리스 애플리케이션입�
 
 ## 사전 요구사항
 
-- AWS 계정 (적절한 권한 필요)
+- AWS 계정 (적절한 권한 필요) / 현재 ap-northeast-2 리전에서만 정상적으로 동작합니다.
 - Node.js 18.x 이상
 - Python 3.12
 - AWS CDK CLI v2.x
