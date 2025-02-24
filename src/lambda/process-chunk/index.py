@@ -180,7 +180,7 @@ Detected Patterns:
         """Bedrock을 사용한 코드 분석"""
         try:
             print(f"Sending request to Bedrock with prompt: {prompt}")
-            
+
             body = json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": self.config.get('max_tokens', 4096),
@@ -195,12 +195,21 @@ Detected Patterns:
                 ]
             })
 
-            response = self.bedrock.invoke_model(
-                modelId=self.config.get('model', 'apac.anthropic.claude-3-5-sonnet-20241022-v2:0'),
-                contentType='application/json',
-                accept='application/json',
-                body=body.encode()
-            )
+            try:
+                response = self.bedrock.invoke_model(
+                    modelId=self.config.get('model', 'apac.anthropic.claude-3-5-sonnet-20241022-v2:0'),
+                    contentType='application/json',
+                    accept='application/json',
+                    body=body.encode()
+                )
+            except self.bedrock.exceptions.ThrottlingException as e:
+                print(f"Bedrock throttling error: {e}")
+                raise Exception("RATE_LIMIT_ERROR: Bedrock API rate limit exceeded") from e
+            except botocore.exceptions.ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == 'ThrottlingException':
+                    raise Exception("RATE_LIMIT_ERROR: Bedrock API rate limit exceeded") from e
+                raise
 
             response_body = json.loads(response['body'].read())
             print(f"Bedrock response: {json.dumps(response_body, indent=2)}")
@@ -209,21 +218,13 @@ Detected Patterns:
                 content = response_body['content'][0].get('text', '')
             else:
                 content = response_body.get('content', '{}')
-            
+
             review_json = json.loads(content)
             return review_json
 
         except json.JSONDecodeError as e:
             print(f"Error parsing Bedrock response as JSON: {e}")
-            return {
-                "summary": {
-                    "functional_changes": [],
-                    "architectural_changes": [],
-                    "technical_improvements": []
-                },
-                "severity": "NORMAL",
-                "review_points": []
-            }
+            raise Exception("VALIDATION_ERROR: Failed to parse Bedrock response") from e
         except Exception as e:
             print(f"Error analyzing with Bedrock: {e}")
             raise
