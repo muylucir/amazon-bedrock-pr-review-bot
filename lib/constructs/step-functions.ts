@@ -16,6 +16,73 @@ export class ReviewBotStepFunctions extends Construct {
   constructor(scope: Construct, id: string, props: ReviewBotStepFunctionsProps) {
     super(scope, id);
 
+    // Initial Processing Task
+    const initialProcessing = new tasks.LambdaInvoke(this, 'InitialProcessing', {
+      lambdaFunction: props.functions.initialProcessing,
+      inputPath: '$',
+      resultPath: '$.processingResult',
+      payloadResponseOnly: true,
+      retryOnServiceExceptions: true,
+    });
+
+    // Split PR into Chunks Task
+    const splitPr = new tasks.LambdaInvoke(this, 'SplitPRIntoChunks', {
+      lambdaFunction: props.functions.splitPr,
+      inputPath: '$.processingResult.body.data',
+      payloadResponseOnly: true,
+      retryOnServiceExceptions: true,
+    });
+
+    // Process Single Chunk Task
+    const processSingleChunk = new tasks.LambdaInvoke(this, 'ProcessSingleChunk', {
+      lambdaFunction: props.functions.processChunk,
+      payloadResponseOnly: true,
+      retryOnServiceExceptions: true,
+    });
+
+    // Process Multiple Chunks
+    const processChunks = new stepfunctions.Map(this, 'ProcessChunks', {
+      inputPath: '$.body',
+      itemsPath: '$.chunks',
+      maxConcurrency: 1,
+      // Replace deprecated parameters with itemSelector
+      itemSelector: {
+        'body.$': '$'
+      }
+    }).itemProcessor(new tasks.LambdaInvoke(this, 'ProcessChunk', {
+      lambdaFunction: props.functions.processChunk,
+      payloadResponseOnly: true,
+      retryOnServiceExceptions: true,
+    }));
+
+    // Aggregate Results Task
+    const aggregateResults = new tasks.LambdaInvoke(this, 'AggregateResults', {
+      lambdaFunction: props.functions.aggregateResults,
+      payloadResponseOnly: true,
+      retryOnServiceExceptions: true,
+    });
+
+    // Post PR Comment Task
+    const postPrComment = new tasks.LambdaInvoke(this, 'PostPRComment', {
+      lambdaFunction: props.functions.postPrComment,
+      payloadResponseOnly: true,
+      retryOnServiceExceptions: true,
+    });
+
+    // Send Slack Notification Task
+    const sendSlackNotification = new tasks.LambdaInvoke(this, 'SendSlackNotification', {
+      lambdaFunction: props.functions.sendSlackNotification,
+      payloadResponseOnly: true,
+      retryOnServiceExceptions: true,
+    });
+
+    // Handle Error Task
+    const handleError = new tasks.LambdaInvoke(this, 'HandleError', {
+      lambdaFunction: props.functions.handleError,
+      payloadResponseOnly: true,
+      retryOnServiceExceptions: true,
+    });
+
     // Success State
     const success = new stepfunctions.Succeed(this, 'Success');
 
@@ -25,171 +92,29 @@ export class ReviewBotStepFunctions extends Construct {
       cause: 'Workflow execution failed'
     });
 
-    // Handle Error Task
-    const handleError = new tasks.LambdaInvoke(this, 'HandleError', {
-      lambdaFunction: props.functions.handleError,
-      payloadResponseOnly: true,
-    });
-
-    // Initial Processing Task
-    const initialProcessing = new tasks.LambdaInvoke(this, 'InitialProcessing', {
-      lambdaFunction: props.functions.initialProcessing,
-      inputPath: '$',
-      resultPath: '$.processingResult',
-      payloadResponseOnly: true,
-    });
-
-    // Split PR into Chunks Task
-    const splitPr = new tasks.LambdaInvoke(this, 'SplitPRIntoChunks', {
-      lambdaFunction: props.functions.splitPr,
-      inputPath: '$.processingResult.body.data',
-      payloadResponseOnly: true,
-    });
-
-    // Process Single Chunk Task
-    const processSingleChunk = new tasks.LambdaInvoke(this, 'ProcessSingleChunk', {
-      lambdaFunction: props.functions.processChunk,
-      payloadResponseOnly: true,
-    });
-
-    // Process Chunk with error handling
-    const processChunk = new tasks.LambdaInvoke(this, 'ProcessChunk', {
-      lambdaFunction: props.functions.processChunk,
-      payloadResponseOnly: true,
-    });
-
-    // Add retry policy for rate limit errors
-    processChunk.addRetry({
-      errors: ['RateLimitError'],
-      interval: cdk.Duration.seconds(5),
-      maxAttempts: 3,
-      backoffRate: 2
-    });
-
-    // Map State for parallel processing
-    const processChunks = new stepfunctions.Map(this, 'ProcessChunks', {
-      inputPath: '$.body',
-      itemsPath: '$.chunks',
-      maxConcurrency: 1,
-      parameters: {
-        'body.$': '$'
-      },
-      resultPath: '$.chunkResults'
-    });
-
-    // Add error catch to Map state
-    processChunks.addCatch(handleError, {
-      resultPath: '$.error'
-    });
-
-    // Configure Map state's item processor
-    processChunks.iterator(processChunk);
-
-    // Filter failed chunks
-    const filterFailedChunks = new stepfunctions.Pass(this, 'FilterFailedChunks', {
-      parameters: {
-        'failed_chunks.$': "$.chunkResults[?(@.statusCode != 200)]",
-        'successful_chunks.$': "$.chunkResults[?(@.statusCode == 200)]"
-      }
-    });
-
-    // Define success passes
-    const prCommentSuccess = new stepfunctions.Pass(this, 'PRCommentSuccess');
-    const slackNotificationSuccess = new stepfunctions.Pass(this, 'SlackNotificationSuccess');
-    const noFailedChunks = new stepfunctions.Pass(this, 'NoFailedChunks');
-
-    // Retry failed chunks Map state
-    const retryFailedChunks = new stepfunctions.Map(this, 'RetryFailedChunks', {
-      maxConcurrency: 1,
-      itemsPath: '$.failed_chunks',
-      resultPath: '$.retryResults',
-      parameters: {
-        'chunk.$': '$'
-      }
-    });
-    retryFailedChunks.iterator(processChunk);
-
-    // Check for failed chunks
-    const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks')
-      .when(stepfunctions.Condition.isPresent('$.failed_chunks[0]'), retryFailedChunks)
-      .otherwise(noFailedChunks);
-
-    // Aggregate Results Task
-    const aggregateResults = new tasks.LambdaInvoke(this, 'AggregateResults', {
-      lambdaFunction: props.functions.aggregateResults,
-      payloadResponseOnly: true,
-    });
-
-    // Post PR Comment Task
-    const postPrComment = new tasks.LambdaInvoke(this, 'PostPRComment', {
-      lambdaFunction: props.functions.postPrComment,
-      payloadResponseOnly: true,
-    });
-
-    // Send Slack Notification Task
-    const sendSlackNotification = new tasks.LambdaInvoke(this, 'SendSlackNotification', {
-      lambdaFunction: props.functions.sendSlackNotification,
-      payloadResponseOnly: true,
-    });
-
-    // Post Results in parallel
+    // Parallel Post Results
     const postResults = new stepfunctions.Parallel(this, 'PostResults', {
       resultPath: '$.postResults'
     });
-
-    // PR Comment branch
-    const prCommentBranch = postPrComment
-      .next(new stepfunctions.Choice(this, 'CheckPRCommentStatus')
-        .when(stepfunctions.Condition.numberEquals('$.statusCode', 200), prCommentSuccess)
-        .otherwise(handleError));
-
-    // Slack Notification branch
-    const slackNotificationBranch = sendSlackNotification
-      .next(new stepfunctions.Choice(this, 'CheckSlackNotificationStatus')
-        .when(stepfunctions.Condition.numberEquals('$.statusCode', 200), slackNotificationSuccess)
-        .otherwise(handleError));
-
-    postResults.branch(prCommentBranch);
-    postResults.branch(slackNotificationBranch);
-
-    // Final status check
-    const checkFinalStatus = new stepfunctions.Choice(this, 'CheckFinalStatus')
-      .when(stepfunctions.Condition.and(
-        stepfunctions.Condition.isPresent('$.postResults[0].statusCode'),
-        stepfunctions.Condition.isPresent('$.postResults[1].statusCode'),
-        stepfunctions.Condition.numberEquals('$.postResults[0].statusCode', 200),
-        stepfunctions.Condition.numberEquals('$.postResults[1].statusCode', 200)
-      ), success)
-      .otherwise(failed);
+    postResults.branch(postPrComment);
+    postResults.branch(sendSlackNotification);
 
     // Choice State for Chunk Size Check
-    const chunkSizeCheck = new stepfunctions.Choice(this, 'ChunkSizeCheck')
-      .when(stepfunctions.Condition.numberGreaterThan('$.body.total_files', 5), 
-        processChunks
-          .next(filterFailedChunks)
-          .next(checkFailedChunks)
-          .next(aggregateResults))
-      .otherwise(processSingleChunk.next(aggregateResults));
+    const chunkSizeCheck = new stepfunctions.Choice(this, 'ChunkSizeCheck');
 
-    // Define default retry policy
-    const defaultRetry = {
-      errors: ['States.TaskFailed'],
-      interval: cdk.Duration.seconds(3),
-      maxAttempts: 2,
-      backoffRate: 1.5,
-    };
-
-    // Add retry policies to tasks
-    [initialProcessing, splitPr, processSingleChunk, 
-     aggregateResults, postPrComment, sendSlackNotification, handleError].forEach(task => {
-      task.addRetry(defaultRetry);
-    });
+    // Configure Choice state transitions
+    chunkSizeCheck
+      .when(stepfunctions.Condition.numberGreaterThan('$.body.total_files', 5), processChunks)
+      .otherwise(processSingleChunk);
 
     // Add error handlers
     initialProcessing.addCatch(handleError, {
       resultPath: '$.error',
     });
     splitPr.addCatch(handleError, {
+      resultPath: '$.error',
+    });
+    processChunks.addCatch(handleError, {
       resultPath: '$.error',
     });
     aggregateResults.addCatch(handleError, {
@@ -199,27 +124,48 @@ export class ReviewBotStepFunctions extends Construct {
       resultPath: '$.error',
     });
 
+    // Define retry policies
+    const defaultRetry = {
+      errors: ['States.TaskFailed'],
+      interval: cdk.Duration.seconds(3),
+      maxAttempts: 2,
+      backoffRate: 1.5,
+    };
+
+    // Add retry policies to all tasks
+    [initialProcessing, splitPr, processSingleChunk, 
+     aggregateResults, postPrComment, sendSlackNotification, handleError].forEach(task => {
+      task.addRetry(defaultRetry);
+    });
+
     // Create State Machine
     this.stateMachine = new stepfunctions.StateMachine(this, 'PRReviewStateMachine', {
-      stateMachineName: 'PR-REVIEWER',
-      definition: initialProcessing
-        .next(splitPr)
-        .next(chunkSizeCheck)
-        .next(postResults)
-        .next(checkFinalStatus),
-      role: props.role,
-      timeout: cdk.Duration.minutes(30),
-      tracingEnabled: true,
-      logs: {
-        destination: new cdk.aws_logs.LogGroup(this, 'ReviewBotStateMachineLogs', {
-          logGroupName: '/aws/vendedlogs/states/pr-reviewer',
-          retention: cdk.aws_logs.RetentionDays.ONE_MONTH,
-          removalPolicy: cdk.RemovalPolicy.DESTROY
-        }),
-        level: stepfunctions.LogLevel.ALL,
-        includeExecutionData: true
-      }
-    });
+        stateMachineName: 'PR-REVIEWER',
+        definitionBody: stepfunctions.DefinitionBody.fromChainable(
+          initialProcessing
+            .next(splitPr)
+            .next(
+              chunkSizeCheck
+                .afterwards()
+                .next(aggregateResults)
+                .next(postResults)
+                .next(success)
+            )
+        ),
+        role: props.role,
+        timeout: cdk.Duration.minutes(30),
+        tracingEnabled: true,
+        logs: {
+          destination: new cdk.aws_logs.LogGroup(this, 'ReviewBotStateMachineLogs', {
+            logGroupName: '/aws/vendedlogs/states/pr-reviewer',
+            retention: cdk.aws_logs.RetentionDays.ONE_MONTH,
+            removalPolicy: cdk.RemovalPolicy.DESTROY
+          }),
+          level: stepfunctions.LogLevel.ALL,
+          includeExecutionData: true
+        },
+        comment: 'State machine for processing PR reviews using Amazon Bedrock'
+      });
 
     // Add CloudFormation outputs
     this.createOutputs();
