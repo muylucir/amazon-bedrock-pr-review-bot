@@ -15,11 +15,6 @@ export class ReviewBotApi extends Construct {
   constructor(scope: Construct, id: string, props: ReviewBotApiProps) {
     super(scope, id);
 
-    // Create log group for API Gateway
-    const logGroup = new logs.LogGroup(this, 'ApiGatewayLogs', {
-      retention: logs.RetentionDays.ONE_WEEK
-    });
-
     // Create API Gateway
     this.api = new apigateway.RestApi(this, 'ReviewBotApi', {
       restApiName: 'PR Review Bot API',
@@ -28,19 +23,7 @@ export class ReviewBotApi extends Construct {
       },
       deployOptions: {
         stageName: 'prod',
-        tracingEnabled: false,
-        loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        accessLogDestination: new apigateway.LogGroupLogDestination(logGroup),
-        accessLogFormat: apigateway.AccessLogFormat.jsonWithStandardFields({
-          caller: false,
-          httpMethod: true,
-          ip: true,
-          protocol: true,
-          requestTime: true,
-          resourcePath: true,
-          responseLength: true,
-          status: true,
-          user: true
+        tracingEnabled: false
         })
       }
     });
