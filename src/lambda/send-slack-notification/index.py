@@ -127,6 +127,7 @@ def get_slack_config(body: Dict[str, Any]) -> Optional[SlackConfig]:
         pr_details = body.get('pr_details', {})
         config = pr_details.get('config', {})
         channel = config.get('slack_channel')
+        notification = config.get('slack_notification')
         
         if not channel:
             raise ValueError("Slack channel not found in PR details")
@@ -135,7 +136,8 @@ def get_slack_config(body: Dict[str, Any]) -> Optional[SlackConfig]:
         
         return SlackConfig(
             token=secret_data['token'],
-            channel=channel
+            channel=channel,
+            notification=notification
         )
         
     except Exception as e:
@@ -172,6 +174,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         config = get_slack_config(body)
         if not config:
             raise ValueError("Failed to load Slack configuration")
+
+        if config.notification == "disable":
+            return {
+                'statusCode': 200,
+                'body': json.dumps({
+                    'message': 'Slack notification is disabled'
+                })
+            }
         
         # 리뷰 통계 추출
         stats = extract_review_stats(body, event)

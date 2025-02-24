@@ -107,6 +107,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'model': processor.config['model'],
                 'max_tokens': int(processor.config['max_tokens']),
                 'temperature': float(processor.config['temperature']),
+                'slack_notification': processor.config['slack_notification'],
                 'slack_channel': processor.config['slack_channel']
             }
         })

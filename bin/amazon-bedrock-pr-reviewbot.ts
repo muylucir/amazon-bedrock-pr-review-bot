@@ -72,7 +72,8 @@ class ReviewBotApp {
       bedrockModel: model,
       maxTokens: parseInt(process.env.MAX_TOKENS || '8192'),
       temperature: parseFloat(process.env.TEMPERATURE || '0.7'),
-      slackChannel: process.env.SLACK_CHANNEL || 'pr-reviews'
+      slackChannel: process.env.SLACK_CHANNEL || 'pr-reviews',
+      slackNotification: process.env.SLACK_NOTIFICATION || 'enable'
     };
   }
 
