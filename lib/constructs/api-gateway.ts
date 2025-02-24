@@ -2,7 +2,6 @@ import * as cdk from 'aws-cdk-lib';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as stepfunctions from 'aws-cdk-lib/aws-stepfunctions';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as logs from 'aws-cdk-lib/aws-logs';
 import { Construct } from 'constructs';
 
 interface ReviewBotApiProps {
@@ -24,21 +23,20 @@ export class ReviewBotApi extends Construct {
       deployOptions: {
         stageName: 'prod',
         tracingEnabled: false
-        })
       }
     });
 
     // Create IAM role for API Gateway
-    const apiRole = new iam.Role(this, 'ApiGatewayRole', {
+    const apiRole = new iam.Role(scope, 'ApiGatewayRole', {
       assumedBy: new iam.ServicePrincipal('apigateway.amazonaws.com'),
-      description: 'Role for API Gateway to invoke Step Functions',
+      description: 'Role for API Gateway to invoke Step Functions'
     });
 
     // Add permission to invoke Step Functions
     apiRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['states:StartExecution'],
-      resources: [props.stateMachine.stateMachineArn],
+      resources: [props.stateMachine.stateMachineArn]
     }));
 
     // Create webhook endpoint
@@ -48,7 +46,7 @@ export class ReviewBotApi extends Construct {
     webhook.addMethod('POST', new apigateway.Integration({
       type: apigateway.IntegrationType.AWS,
       integrationHttpMethod: 'POST',
-      uri: `arn:aws:apigateway:${cdk.Stack.of(this).region}:states:action/StartExecution`,
+      uri: `arn:aws:apigateway:${cdk.Stack.of(scope).region}:states:action/StartExecution`,
       options: {
         credentialsRole: apiRole,
         requestTemplates: {
@@ -81,9 +79,9 @@ export class ReviewBotApi extends Construct {
     });
 
     // Output API URL
-    new cdk.CfnOutput(this, 'WebhookUrl', {
+    new cdk.CfnOutput(scope, 'WebhookUrl', {
       value: `${this.api.url}webhook`,
-      description: 'Webhook URL for PR Review Bot',
+      description: 'Webhook URL for PR Review Bot'
     });
   }
 }
