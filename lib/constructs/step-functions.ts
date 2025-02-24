@@ -54,7 +54,7 @@ export class ReviewBotStepFunctions extends Construct {
         'succeeded.$': "$.processResults.results[?(@.statusCode == 200)]",
         'failed.$': "$.processResults.results[?(@.statusCode == 500 || @.statusCode == 429 || @.body.error && @.body.error.includes('RATE_LIMIT_ERROR'))]"
       },
-      resultPath: '$.classifiedResults'
+      resultPath: '$'
     });
 
     // 실패한 청크 재시도
