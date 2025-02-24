@@ -150,18 +150,15 @@ export class ReviewBotStepFunctions extends Construct {
       task.addRetry(defaultRetry);
     });
 
-    // 실패한 청크 재처리를 위한 Choice 상태
+    // 실패한 청크 재처리를 위한 Choice 상태 - 전체 흐름 포함
     const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks')
       .when(
         stepfunctions.Condition.isPresent('$.classifiedResults.failed[0]'),
-        waitBeforeRetry.next(retryFailedChunks).next(mergeResults)
+        waitBeforeRetry.next(retryFailedChunks).next(mergeResults).next(aggregateResults).next(postResults).next(success)
       )
-      .otherwise(mergeResults);
+      .otherwise(mergeResults.next(aggregateResults).next(postResults).next(success));
 
-    // MergeResults에서 AggregateResults로 연결
-    mergeResults.next(aggregateResults);
-
-    // Create State Machine
+    // Create State Machine - Choice 상태가 최종 흐름을 정의
     this.stateMachine = new stepfunctions.StateMachine(this, 'PRReviewStateMachine', {
       stateMachineName: 'PR-REVIEWER',
       definitionBody: stepfunctions.DefinitionBody.fromChainable(
@@ -169,9 +166,7 @@ export class ReviewBotStepFunctions extends Construct {
           .next(splitPr)
           .next(processChunks)
           .next(classifyResults)
-          .next(checkFailedChunks) // Choice 상태로 분기 후 mergeResults로 수렴
-          .next(postResults)
-          .next(success)
+          .next(checkFailedChunks) // Choice 상태에서 모든 후속 흐름 정의
       ),
       role: props.role,
       timeout: cdk.Duration.minutes(30),
