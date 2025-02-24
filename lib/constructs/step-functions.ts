@@ -58,26 +58,22 @@ export class ReviewBotStepFunctions extends Construct {
       resultPath: '$.classifiedResults'
     });
 
-    // 실패한 청크 재처리를 위한 Choice 상태
-    const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks')
-      .when(
-        stepfunctions.Condition.isPresent('$.classifiedResults.failed[0]'),
-        new stepfunctions.Wait(this, 'WaitBeforeRetry', {
-          time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(2))
-        }).next(
-          new stepfunctions.Map(this, 'RetryFailedChunks', {
-            inputPath: '$.classifiedResults',
-            itemsPath: '$.failed',
-            maxConcurrency: 1,
-            resultPath: '$.retryResults'
-          }).itemProcessor(new tasks.LambdaInvoke(this, 'RetryChunk', {
-            lambdaFunction: props.functions.processChunk,
-            payloadResponseOnly: true,
-            retryOnServiceExceptions: true
-          }))
-        )
-      )
-      .otherwise(new stepfunctions.Pass(this, 'NoFailedChunks'));
+    // 실패한 청크가 있는 경우 재시도할 Map 상태
+    const retryFailedChunks = new stepfunctions.Map(this, 'RetryFailedChunks', {
+      inputPath: '$.classifiedResults',
+      itemsPath: '$.failed',
+      maxConcurrency: 1,
+      resultPath: '$.retryResults'
+    }).itemProcessor(new tasks.LambdaInvoke(this, 'RetryChunk', {
+      lambdaFunction: props.functions.processChunk,
+      payloadResponseOnly: true,
+      retryOnServiceExceptions: true
+    }));
+
+    // 대기 상태
+    const waitBeforeRetry = new stepfunctions.Wait(this, 'WaitBeforeRetry', {
+      time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(2))
+    });
 
     // 재처리 결과와 원본 성공 결과 병합
     const mergeResults = new stepfunctions.Pass(this, 'MergeResults', {
@@ -164,6 +160,18 @@ export class ReviewBotStepFunctions extends Construct {
       task.addRetry(defaultRetry);
     });
 
+    // 실패한 청크 재처리를 위한 Choice 상태 - Choice 이후 로직 수정
+    const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks');
+    
+    // Choice 이후 경로 정의
+    // 실패한 청크가 있으면 대기 후 재시도
+    checkFailedChunks
+      .when(
+        stepfunctions.Condition.isPresent('$.classifiedResults.failed[0]'),
+        waitBeforeRetry.next(retryFailedChunks).next(mergeResults)
+      )
+      .otherwise(mergeResults);
+
     // Create State Machine - 단순화된 워크플로우
     this.stateMachine = new stepfunctions.StateMachine(this, 'PRReviewStateMachine', {
       stateMachineName: 'PR-REVIEWER',
@@ -172,8 +180,7 @@ export class ReviewBotStepFunctions extends Construct {
           .next(splitPr)
           .next(processChunks)
           .next(classifyResults)
-          .next(checkFailedChunks)
-          .next(mergeResults)
+          .next(checkFailedChunks) // Choice 상태 이후의 로직은 Choice 내에서 정의됨
           .next(aggregateResults)
           .next(postResults)
           .next(success)
