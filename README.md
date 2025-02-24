@@ -31,7 +31,7 @@ Amazon Bedrock을 활용한 자동 PR 리뷰 서버리스 애플리케이션입�
 1. 저장소 클론:
 ```bash
 git clone https://github.com/muylucir/amazon-bedrock-pr-review-bot.git
-cd amazon-bedrock-reviewbot
+cd amazon-bedrock-pr-review-bot
 ```
 
 2. 의존성 설치:
