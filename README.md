@@ -1,6 +1,57 @@
 # Amazon Bedrock PR Review Bot
 
-Amazon Bedrock을 활용한 자동 PR 리뷰 서버리스 애플리케이션입니다. AWS CDK로 구축되었으며, GitHub, GitLab, Bitbucket과 통합되어 Slack 알림과 함께 상세한 코드 리뷰를 제공합니다.
+Amazon Bedrock을 활용해 생성된 Pull request에 대해 자동으로 Code review를 제공하는 애플리케이션입니다. 
+AWS CDK로 구축되었으며, GitHub, GitLab, Bitbucket과 통합되어 Slack 알림과 함께 상세한 코드 리뷰를 제공합니다.
+
+PR에 여러 파일이 포함될 때, 파일들 간의 관계를 고려하지 않고 개별적으로 분석하면 중요한 컨텍스트를 놓칠 수 있습니다. 
+Amazon Bedrock PR Review Bot은 파일 간의 관계를 분석하여 연관된 파일들을 함께 검토함으로써 더 정확하고 의미 있는 리뷰를 제공합니다.
+
+
+```mermaid
+graph TD
+    root[Project Root] --> auth[auth/]
+    root --> models[models/]
+    root --> utils[utils/]
+    
+    subgraph "Chunk 1: Auth Module"
+        auth --> user[user.py]
+        auth --> user_test[user_test.py]
+        auth --> auth_py[auth.py]
+        
+        classDef authFiles fill:#d0e0ff,stroke:#333,stroke-width:2px
+        class user,user_test,auth_py authFiles
+    end
+    
+    subgraph "Chunk 2: Data Layer"
+        models --> models_py[models.py]
+        models --> db[database.py]
+        models --> migrations[migrations.py]
+        
+        classDef modelFiles fill:#ffe0d0,stroke:#333,stroke-width:2px
+        class models_py,db,migrations modelFiles
+    end
+    
+    subgraph "Chunk 3: Utilities"
+        utils --> config[config.py]
+        utils --> utils_py[utils.py]
+        utils --> constants[constants.py]
+        
+        classDef utilFiles fill:#d0ffd0,stroke:#333,stroke-width:2px
+        class config,utils_py,constants utilFiles
+    end
+
+    classDef folder fill:#f9f9f9,stroke:#333,stroke-width:2px
+    class root,auth,models,utils folder
+
+    %% 관계 표시
+    user -.->|imports| auth_py
+    user_test -.->|imports| user
+    user_test -.->|imports| auth_py
+    models_py -.->|imports| db
+    migrations -.->|imports| db
+    utils_py -.->|imports| constants
+    config -.->|imports| utils_py
+```
 
 ## 아키텍처
 
