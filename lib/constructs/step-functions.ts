@@ -22,7 +22,6 @@ export class ReviewBotStepFunctions extends Construct {
       inputPath: '$',
       resultPath: '$.processingResult',
       payloadResponseOnly: true,
-      retryOnServiceExceptions: true,
     });
 
     // Split PR into Chunks Task
@@ -30,36 +29,26 @@ export class ReviewBotStepFunctions extends Construct {
       lambdaFunction: props.functions.splitPr,
       inputPath: '$.processingResult.body.data',
       payloadResponseOnly: true,
-      retryOnServiceExceptions: true,
     });
 
     // Process Single Chunk Task
     const processSingleChunk = new tasks.LambdaInvoke(this, 'ProcessSingleChunk', {
       lambdaFunction: props.functions.processChunk,
       payloadResponseOnly: true,
-      retryOnServiceExceptions: true,
     });
 
     // Process Chunk with error handling
     const processChunk = new tasks.LambdaInvoke(this, 'ProcessChunk', {
       lambdaFunction: props.functions.processChunk,
       payloadResponseOnly: true,
-      retryOnServiceExceptions: true
     });
 
     // Add retry policy for rate limit errors
     processChunk.addRetry({
-      errors: ['States.TaskFailed'],
-      intervalSeconds: 5,
+      errors: ['RateLimitError'],
+      interval: cdk.Duration.seconds(5),
       maxAttempts: 3,
-      backoffRate: 2,
-      resultPath: '$.error',
-      conditions: [
-        {
-          errorType: 'RateLimitError',
-          errorPath: '$.error.error_type'
-        }
-      ]
+      backoffRate: 2
     });
 
     // Map State for parallel processing
@@ -67,43 +56,46 @@ export class ReviewBotStepFunctions extends Construct {
       inputPath: '$.body',
       itemsPath: '$.chunks',
       maxConcurrency: 1,
-      itemSelector: {
+      parameters: {
         'body.$': '$'
       },
-      resultPath: '$.chunkResults',
-      catchErrors: ['States.ALL'],
-      resultSelector: {
-        'results.$': '$.results',
-        'failed.$': '$.failed'
-      }
-    }).itemProcessor(processChunk);
+      resultPath: '$.chunkResults'
+    });
+
+    // Add error catch to Map state
+    processChunks.addCatch(handleError, {
+      resultPath: '$.error'
+    });
+
+    // Configure Map state's item processor
+    processChunks.iterator(processChunk);
 
     // Filter failed chunks
     const filterFailedChunks = new stepfunctions.Pass(this, 'FilterFailedChunks', {
       parameters: {
-        'failed_chunks.$': '$.chunkResults[?(@.statusCode != 200)]',
-        'successful_chunks.$': '$.chunkResults[?(@.statusCode == 200)]'
+        'failed_chunks.$': "$.chunkResults[?(@.statusCode != 200)]",
+        'successful_chunks.$': "$.chunkResults[?(@.statusCode == 200)]"
       }
     });
 
     // Check for failed chunks
-    const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks')
-      .when(
-        stepfunctions.Condition.isPresent('$.failed_chunks[0]'),
-        // Retry only failed chunks
-        new stepfunctions.Map(this, 'RetryFailedChunks', {
-          maxConcurrency: 1,
-          itemsPath: '$.failed_chunks',
-          resultPath: '$.retryResults'
-        }).itemProcessor(processChunk)
-      )
-      .otherwise(new stepfunctions.Pass(this, 'NoFailedChunks'));
+    const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks');
+
+    // Retry failed chunks Map state
+    const retryFailedChunks = new stepfunctions.Map(this, 'RetryFailedChunks', {
+      maxConcurrency: 1,
+      itemsPath: '$.failed_chunks',
+      resultPath: '$.retryResults',
+      parameters: {
+        'chunk.$': '$'
+      }
+    });
+    retryFailedChunks.iterator(processChunk);
 
     // Aggregate Results Task
     const aggregateResults = new tasks.LambdaInvoke(this, 'AggregateResults', {
       lambdaFunction: props.functions.aggregateResults,
       payloadResponseOnly: true,
-      retryOnServiceExceptions: true,
     });
 
     // Success State
@@ -119,57 +111,70 @@ export class ReviewBotStepFunctions extends Construct {
     const handleError = new tasks.LambdaInvoke(this, 'HandleError', {
       lambdaFunction: props.functions.handleError,
       payloadResponseOnly: true,
-      retryOnServiceExceptions: true,
     });
 
     // Post PR Comment Task
     const postPrComment = new tasks.LambdaInvoke(this, 'PostPRComment', {
       lambdaFunction: props.functions.postPrComment,
       payloadResponseOnly: true,
-      retryOnServiceExceptions: true,
     });
 
     // Send Slack Notification Task
     const sendSlackNotification = new tasks.LambdaInvoke(this, 'SendSlackNotification', {
       lambdaFunction: props.functions.sendSlackNotification,
       payloadResponseOnly: true,
-      retryOnServiceExceptions: true,
     });
+
+    // Define success passes
+    const prCommentSuccess = new stepfunctions.Pass(this, 'PRCommentSuccess');
+    const slackNotificationSuccess = new stepfunctions.Pass(this, 'SlackNotificationSuccess');
+    const noFailedChunks = new stepfunctions.Pass(this, 'NoFailedChunks');
 
     // Post Results in parallel
     const postResults = new stepfunctions.Parallel(this, 'PostResults', {
       resultPath: '$.postResults'
-    })
-    .branch(new stepfunctions.Chain()
-      .start(postPrComment)
+    });
+
+    // PR Comment branch
+    const prCommentBranch = postPrComment
       .next(new stepfunctions.Choice(this, 'CheckPRCommentStatus')
-        .when(stepfunctions.Condition.numberEquals('$.statusCode', 200),
-          new stepfunctions.Pass(this, 'PRCommentSuccess'))
-        .otherwise(handleError)))
-    .branch(new stepfunctions.Chain()
-      .start(sendSlackNotification)
+        .when(stepfunctions.Condition.numberEquals('$.statusCode', 200), prCommentSuccess)
+        .otherwise(handleError));
+
+    // Slack Notification branch
+    const slackNotificationBranch = sendSlackNotification
       .next(new stepfunctions.Choice(this, 'CheckSlackNotificationStatus')
-        .when(stepfunctions.Condition.numberEquals('$.statusCode', 200),
-          new stepfunctions.Pass(this, 'SlackNotificationSuccess'))
-        .otherwise(handleError)));
+        .when(stepfunctions.Condition.numberEquals('$.statusCode', 200), slackNotificationSuccess)
+        .otherwise(handleError));
+
+    postResults.branch(prCommentBranch);
+    postResults.branch(slackNotificationBranch);
+
+    // Add paths to Choice states
+    checkFailedChunks
+      .when(stepfunctions.Condition.isPresent('$.failed_chunks[0]'), retryFailedChunks)
+      .otherwise(noFailedChunks);
 
     // Final status check
     const checkFinalStatus = new stepfunctions.Choice(this, 'CheckFinalStatus')
-      .when(
-        stepfunctions.Condition.and(
-          stepfunctions.Condition.isPresent('$.postResults[0].statusCode'),
-          stepfunctions.Condition.isPresent('$.postResults[1].statusCode'),
-          stepfunctions.Condition.numberEquals('$.postResults[0].statusCode', 200),
-          stepfunctions.Condition.numberEquals('$.postResults[1].statusCode', 200)
-        ),
-        success
-      )
+      .when(stepfunctions.Condition.and(
+        stepfunctions.Condition.isPresent('$.postResults[0].statusCode'),
+        stepfunctions.Condition.isPresent('$.postResults[1].statusCode'),
+        stepfunctions.Condition.numberEquals('$.postResults[0].statusCode', 200),
+        stepfunctions.Condition.numberEquals('$.postResults[1].statusCode', 200)
+      ), success)
       .otherwise(failed);
 
     // Choice State for Chunk Size Check
-    const chunkSizeCheck = new stepfunctions.Choice(this, 'ChunkSizeCheck');
+    const chunkSizeCheck = new stepfunctions.Choice(this, 'ChunkSizeCheck')
+      .when(stepfunctions.Condition.numberGreaterThan('$.body.total_files', 5), 
+        processChunks
+          .next(filterFailedChunks)
+          .next(checkFailedChunks)
+          .next(aggregateResults))
+      .otherwise(processSingleChunk.next(aggregateResults));
 
-    // Define retry policies
+    // Define default retry policy
     const defaultRetry = {
       errors: ['States.TaskFailed'],
       interval: cdk.Duration.seconds(3),
@@ -190,9 +195,6 @@ export class ReviewBotStepFunctions extends Construct {
     splitPr.addCatch(handleError, {
       resultPath: '$.error',
     });
-    processChunks.addCatch(handleError, {
-      resultPath: '$.error',
-    });
     aggregateResults.addCatch(handleError, {
       resultPath: '$.error',
     });
@@ -200,26 +202,14 @@ export class ReviewBotStepFunctions extends Construct {
       resultPath: '$.error',
     });
 
-    // Configure Choice state transitions
-    chunkSizeCheck
-      .when(stepfunctions.Condition.numberGreaterThan('$.body.total_files', 5), 
-        processChunks
-          .next(filterFailedChunks)
-          .next(checkFailedChunks))
-      .otherwise(processSingleChunk);
-
     // Create State Machine
     this.stateMachine = new stepfunctions.StateMachine(this, 'PRReviewStateMachine', {
       stateMachineName: 'PR-REVIEWER',
-      definitionBody: stepfunctions.DefinitionBody.fromChainable(
-        initialProcessing
-          .next(splitPr)
-          .next(chunkSizeCheck)
-          .afterwards()
-          .next(aggregateResults)
-          .next(postResults)
-          .next(checkFinalStatus)
-      ),
+      definition: initialProcessing
+        .next(splitPr)
+        .next(chunkSizeCheck)
+        .next(postResults)
+        .next(checkFinalStatus),
       role: props.role,
       timeout: cdk.Duration.minutes(30),
       tracingEnabled: true,
@@ -231,8 +221,7 @@ export class ReviewBotStepFunctions extends Construct {
         }),
         level: stepfunctions.LogLevel.ALL,
         includeExecutionData: true
-      },
-      comment: 'State machine for processing PR reviews using Amazon Bedrock'
+      }
     });
 
     // Add CloudFormation outputs
