@@ -87,7 +87,7 @@ export class ReviewBotStepFunctions extends Construct {
     // Aggregate Results Task
     const aggregateResults = new tasks.LambdaInvoke(this, 'AggregateResults', {
       lambdaFunction: props.functions.aggregateResults,
-      inputPath: '$.mergedResults.allResults', // 병합된 결과 사용
+      inputPath: '$.mergedResults.allResults',
       payloadResponseOnly: true,
       retryOnServiceExceptions: true,
     });
@@ -154,9 +154,12 @@ export class ReviewBotStepFunctions extends Construct {
     const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks')
       .when(
         stepfunctions.Condition.isPresent('$.classifiedResults.failed[0]'),
-        waitBeforeRetry.next(retryFailedChunks).next(mergeResults).next(aggregateResults) // 분기 내에서 완료
+        waitBeforeRetry.next(retryFailedChunks).next(mergeResults)
       )
-      .otherwise(mergeResults.next(aggregateResults)); // otherwise 분기에서도 완료
+      .otherwise(mergeResults);
+
+    // MergeResults에서 AggregateResults로 연결
+    mergeResults.next(aggregateResults);
 
     // Create State Machine
     this.stateMachine = new stepfunctions.StateMachine(this, 'PRReviewStateMachine', {
@@ -166,7 +169,7 @@ export class ReviewBotStepFunctions extends Construct {
           .next(splitPr)
           .next(processChunks)
           .next(classifyResults)
-          .next(checkFailedChunks) // Choice 상태로 분기 처리 완료
+          .next(checkFailedChunks) // Choice 상태로 분기 후 mergeResults로 수렴
           .next(postResults)
           .next(success)
       ),
