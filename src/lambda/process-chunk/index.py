@@ -26,14 +26,9 @@ class ReviewResult:
 
 class ChunkProcessor:
     def __init__(self, event_data: Dict[str, Any]):
-        # body가 문자열인 경우 처리
-        if isinstance(event_data.get('body'), str):
-            body = json.loads(event_data['body'])
-        else:
-            body = event_data.get('body', {})
-
+        print(event_data)
         # chunk와 config 데이터 추출
-        self.chunk_data = body.get('chunks', [{}])[0]  # 첫 번째 청크
+        self.chunk_data = event_data
         self.config = self.chunk_data.get('pr_details', {}).get('config', {})
         self.bedrock = boto3.client('bedrock-runtime', region_name=self.config.get('aws_region'))
 
@@ -292,13 +287,8 @@ Detected Patterns:
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Lambda 핸들러"""
     try:
-        # 입력 데이터 구조 정규화
-        if isinstance(event.get('body'), str):
-            body = json.loads(event['body'])
-        else:
-            body = event.get('body', {})
 
-        processor = ChunkProcessor({'body': body})
+        processor = ChunkProcessor(event)
         chunk_results = []
         
         # PR 상세 정보 추출
