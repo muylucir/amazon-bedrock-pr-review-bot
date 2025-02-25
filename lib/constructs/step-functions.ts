@@ -54,7 +54,12 @@ export class ReviewBotStepFunctions extends Construct {
         'succeeded.$': "$.processResults.results[?(@.statusCode == 200)]",
         'failed.$': "$.processResults.results[?(@.statusCode == 500 || @.statusCode == 429 || @.body.error && @.body.error.includes('RATE_LIMIT_ERROR'))]"
       },
-      resultPath: '$'
+      resultPath: '$.classifiedResults'
+    });
+
+    // 대기 상태
+    const waitBeforeRetry = new stepfunctions.Wait(this, 'WaitBeforeRetry', {
+      time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(2))
     });
 
     // 실패한 청크 재시도
@@ -69,34 +74,18 @@ export class ReviewBotStepFunctions extends Construct {
       retryOnServiceExceptions: true
     }));
 
-    // 대기 상태
-    const waitBeforeRetry = new stepfunctions.Wait(this, 'WaitBeforeRetry', {
-      time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(2))
+    // retryResults 준비 (빈 배열 기본값 적용)
+    const prepareRetryResults = new stepfunctions.Pass(this, 'PrepareRetryResults', {
+      parameters: {
+        'retryResults.$': "States.JsonMerge($.retryResults, [], false)"
+      },
+      resultPath: '$.preparedRetry'
     });
 
-    // 결과 병합 - 수정된 부분
+    // 결과 병합
     const mergeResults = new stepfunctions.Pass(this, 'MergeResults', {
       parameters: {
-        'allResults': {
-          'States.ArrayConcat': [
-            {
-              '$': '$.classifiedResults.succeeded'
-            },
-            {
-              'States.JsonMerge': [
-                {
-                  'States.JsonMerge': [
-                    { '$': '$.retryResults.Items' },
-                    { '$': '$.retryResults' },
-                    false
-                  ]
-                },
-                [],
-                false
-              ]
-            }
-          ]
-        }
+        'allResults.$': "States.ArrayConcat($.classifiedResults.succeeded, $.preparedRetry.retryResults)"
       },
       resultPath: '$.mergedResults'
     });
@@ -162,6 +151,7 @@ export class ReviewBotStepFunctions extends Construct {
       backoffRate: 1.5,
     };
 
+    // Add retry policies to all tasks
     [initialProcessing, splitPr, aggregateResults, postPrComment, sendSlackNotification, handleError].forEach(task => {
       task.addRetry(defaultRetry);
     });
@@ -170,11 +160,12 @@ export class ReviewBotStepFunctions extends Construct {
     const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks')
       .when(
         stepfunctions.Condition.isPresent('$.classifiedResults.failed[0]'),
-        waitBeforeRetry.next(retryFailedChunks).next(mergeResults)
+        waitBeforeRetry.next(retryFailedChunks).next(prepareRetryResults)
       )
-      .otherwise(mergeResults);
+      .otherwise(prepareRetryResults);
 
     // 전체 흐름 연결
+    prepareRetryResults.next(mergeResults);
     mergeResults.next(aggregateResults).next(postResults).next(success);
 
     // State Machine 정의
