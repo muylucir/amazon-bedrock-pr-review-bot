@@ -201,7 +201,7 @@ aws ssm put-parameter --name /pr-reviewer/config/repo_type --value <github | git
 3. PR에 리뷰 코멘트 작성
 4. (Option) 설정된 Slack 채널로 요약 전송 (Slack 알림을 사용하려면 Parameter Store의 /pr-reviewer/config/slack_notification 값을 "enable"로 변경하고, Secret Manager의 /pr-reviewer/tokens/slack에 Token을 입력합니다.)
 
-[샘플 Report 보기](https://github.com/muylucir/amazon-bedrock-reviewbot/blob/main/docs/sample_report.md)
+[샘플 Report 보기](https://github.com/muylucir/amazon-bedrock-pr-review-bot/blob/main/docs/sample_report.md)
 
 ## 모니터링
 
