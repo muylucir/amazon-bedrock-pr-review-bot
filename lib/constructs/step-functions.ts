@@ -60,7 +60,7 @@ export class ReviewBotStepFunctions extends Construct {
 
     // 대기 상태
     const waitBeforeRetry = new stepfunctions.Wait(this, 'WaitBeforeRetry', {
-      time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(2))
+      time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(5))
     });
 
     // 실패한 청크가 있는 경우 재시도할 Map 상태
