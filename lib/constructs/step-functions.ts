@@ -75,12 +75,13 @@ export class ReviewBotStepFunctions extends Construct {
       retryOnServiceExceptions: true
     }));
 
-    // 재처리 결과와 원본 성공 결과 병합
+    // 재처리 결과와 원본 성공 결과 병합 - 이 부분을 수정
     const mergeResults = new stepfunctions.Pass(this, 'MergeResults', {
       parameters: {
         'originalResults.$': '$.classifiedResults.succeeded',
-        'retryResults.$': '$.retryResults[*]',
-        'allResults.$': "States.ArrayConcat($.classifiedResults.succeeded, $.retryResults[*])"
+        'retryResults.$': '$.retryResults',
+        // 이 부분이 문제였습니다 - States.ArrayConcat 함수 호출 방식 수정
+        'allResults.$': "States.ArrayConcat($.classifiedResults.succeeded, $.retryResults)"
       },
       resultPath: '$.mergedResults'
     });
