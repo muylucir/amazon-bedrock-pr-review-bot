@@ -573,8 +573,17 @@ class ResultAggregator:
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Lambda 핸들러"""
     try:
+
+         # 실패 청크 재시도 결과 처리
+        classified_results = event.get('classifiedResults', {})
+        succeeded_results = classified_results.get('succeeded', [])
+        retry_results = event.get('retryResults', [])
+
+        # 모든 결과 병합 (재시도 결과를 성공 결과에 추가)
+        all_results = succeeded_results + retry_results
+
         # 결과 집계기 초기화 - event를 직접 전달
-        aggregator = ResultAggregator(event)
+        aggregator = ResultAggregator(all_results)
         summary = aggregator.analyze_results()
         
         markdown_report = aggregator.generate_markdown_report(summary)

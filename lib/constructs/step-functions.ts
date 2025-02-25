@@ -75,20 +75,17 @@ export class ReviewBotStepFunctions extends Construct {
       retryOnServiceExceptions: true
     }));
 
-    // 재처리 결과와 원본 성공 결과 병합 - 이 부분을 수정
+    // 간단한 상태 전환만 수행하는 mergeResults
     const mergeResults = new stepfunctions.Pass(this, 'MergeResults', {
-      parameters: {
-        'originalResults.$': '$.classifiedResults.succeeded',
-        'retryResults.$': '$.retryResults',
-        // 이 부분이 문제였습니다 - States.ArrayConcat 함수 호출 방식 수정
-        'allResults.$': "States.ArrayConcat($.classifiedResults.succeeded, $.retryResults)"
-      },
-      resultPath: '$.mergedResults'
+      // 아무 작업도 수행하지 않고 원래 데이터를 그대로 전달
+      resultPath: '$.mergePhase'
     });
-
-    // Aggregate Results Task
+    
+    // 이후 실행할 Lambda 함수에 전체 상태를 전달
     const aggregateResults = new tasks.LambdaInvoke(this, 'AggregateResults', {
       lambdaFunction: props.functions.aggregateResults,
+      // 이렇게 하면 Lambda 함수가 $.classifiedResults.succeeded와 $.retryResults 모두 접근 가능
+      inputPath: '$',
       payloadResponseOnly: true,
       retryOnServiceExceptions: true,
     });
