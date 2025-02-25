@@ -33,12 +33,13 @@ export class ReviewBotStepFunctions extends Construct {
       retryOnServiceExceptions: true,
     });
 
-    // Process Chunks
+    // Process Chunks - 단순화된 단일 Map 상태 사용 (청크 수에 관계없이)
     const processChunks = new stepfunctions.Map(this, 'ProcessChunks', {
       inputPath: '$.body',
       itemsPath: '$.chunks',
-      maxConcurrency: 3,
+      maxConcurrency: 3, // 동시 처리 수 설정 
       resultPath: '$.processResults',
+      // 결과 선택기를 통한 결과 구조화
       resultSelector: {
         'results.$': '$[*]'
       }
@@ -54,10 +55,10 @@ export class ReviewBotStepFunctions extends Construct {
         'succeeded.$': "$.processResults.results[?(@.statusCode == 200)]",
         'failed.$': "$.processResults.results[?(@.statusCode == 500 || @.statusCode == 429 || @.body.error && @.body.error.includes('RATE_LIMIT_ERROR'))]"
       },
-      resultPath: '$'
+      resultPath: '$.classifiedResults'
     });
 
-    // 실패한 청크 재시도
+    // 실패한 청크가 있는 경우 재시도할 Map 상태
     const retryFailedChunks = new stepfunctions.Map(this, 'RetryFailedChunks', {
       inputPath: '$.classifiedResults',
       itemsPath: '$.failed',
@@ -74,37 +75,38 @@ export class ReviewBotStepFunctions extends Construct {
       time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(2))
     });
 
-    // 결과 병합 - 수정된 부분
+    // 재처리 결과와 원본 성공 결과 병합
     const mergeResults = new stepfunctions.Pass(this, 'MergeResults', {
       parameters: {
-        'allResults.$': "States.ArrayConcat($.classifiedResults.succeeded, $.retryResults)"
+        'originalResults.$': '$.classifiedResults.succeeded',
+        'retryResults.$': '$.retryResults[*]',
+        'allResults.$': "States.ArrayConcat($.classifiedResults.succeeded, $.retryResults[*])"
       },
       resultPath: '$.mergedResults'
     });
 
-    // Aggregate Results
+    // Aggregate Results Task
     const aggregateResults = new tasks.LambdaInvoke(this, 'AggregateResults', {
       lambdaFunction: props.functions.aggregateResults,
-      inputPath: '$.mergedResults.allResults',
       payloadResponseOnly: true,
       retryOnServiceExceptions: true,
     });
 
-    // Post PR Comment
+    // Post PR Comment Task
     const postPrComment = new tasks.LambdaInvoke(this, 'PostPRComment', {
       lambdaFunction: props.functions.postPrComment,
       payloadResponseOnly: true,
       retryOnServiceExceptions: true,
     });
 
-    // Send Slack Notification
+    // Send Slack Notification Task
     const sendSlackNotification = new tasks.LambdaInvoke(this, 'SendSlackNotification', {
       lambdaFunction: props.functions.sendSlackNotification,
       payloadResponseOnly: true,
       retryOnServiceExceptions: true,
     });
 
-    // Handle Error
+    // Handle Error Task
     const handleError = new tasks.LambdaInvoke(this, 'HandleError', {
       lambdaFunction: props.functions.handleError,
       payloadResponseOnly: true,
@@ -128,12 +130,21 @@ export class ReviewBotStepFunctions extends Construct {
     postResults.branch(sendSlackNotification);
 
     // Add error handlers
-    initialProcessing.addCatch(handleError, { resultPath: '$.error' });
-    splitPr.addCatch(handleError, { resultPath: '$.error' });
-    processChunks.addCatch(handleError, { resultPath: '$.error' });
-    retryFailedChunks.addCatch(handleError, { resultPath: '$.error' });
-    aggregateResults.addCatch(handleError, { resultPath: '$.error' });
-    postResults.addCatch(handleError, { resultPath: '$.error' });
+    initialProcessing.addCatch(handleError, {
+      resultPath: '$.error',
+    });
+    splitPr.addCatch(handleError, {
+      resultPath: '$.error',
+    });
+    processChunks.addCatch(handleError, {
+      resultPath: '$.error',
+    });
+    aggregateResults.addCatch(handleError, {
+      resultPath: '$.error',
+    });
+    postResults.addCatch(handleError, {
+      resultPath: '$.error',
+    });
 
     // Define retry policies
     const defaultRetry = {
@@ -143,22 +154,25 @@ export class ReviewBotStepFunctions extends Construct {
       backoffRate: 1.5,
     };
 
-    [initialProcessing, splitPr, aggregateResults, postPrComment, sendSlackNotification, handleError].forEach(task => {
+    // Add retry policies to all Lambda tasks
+    [initialProcessing, splitPr, aggregateResults, 
+     postPrComment, sendSlackNotification, handleError].forEach(task => {
       task.addRetry(defaultRetry);
     });
 
-    // 실패한 청크 재처리 Choice 상태
-    const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks')
+    // 실패한 청크 재처리를 위한 Choice 상태 - Choice 이후 로직 수정
+    const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks');
+    
+    // Choice 이후 경로 정의
+    // 실패한 청크가 있으면 대기 후 재시도
+    checkFailedChunks
       .when(
         stepfunctions.Condition.isPresent('$.classifiedResults.failed[0]'),
         waitBeforeRetry.next(retryFailedChunks).next(mergeResults)
       )
       .otherwise(mergeResults);
 
-    // 전체 흐름 연결
-    mergeResults.next(aggregateResults).next(postResults).next(success);
-
-    // State Machine 정의
+    // Create State Machine - 단순화된 워크플로우
     this.stateMachine = new stepfunctions.StateMachine(this, 'PRReviewStateMachine', {
       stateMachineName: 'PR-REVIEWER',
       definitionBody: stepfunctions.DefinitionBody.fromChainable(
@@ -166,7 +180,10 @@ export class ReviewBotStepFunctions extends Construct {
           .next(splitPr)
           .next(processChunks)
           .next(classifyResults)
-          .next(checkFailedChunks)
+          .next(checkFailedChunks) // Choice 상태 이후의 로직은 Choice 내에서 정의됨
+          .next(aggregateResults)
+          .next(postResults)
+          .next(success)
       ),
       role: props.role,
       timeout: cdk.Duration.minutes(30),
@@ -183,6 +200,7 @@ export class ReviewBotStepFunctions extends Construct {
       comment: 'State machine for processing PR reviews using Amazon Bedrock'
     });
 
+    // Add CloudFormation outputs
     this.createOutputs();
   }
 
