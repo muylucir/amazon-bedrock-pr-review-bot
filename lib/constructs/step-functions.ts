@@ -75,12 +75,10 @@ export class ReviewBotStepFunctions extends Construct {
       time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(2))
     });
 
-    // 재처리 결과와 원본 성공 결과 병합
+    // 결과 병합 - 수정된 부분
     const mergeResults = new stepfunctions.Pass(this, 'MergeResults', {
       parameters: {
-        'originalResults.$': '$.classifiedResults.succeeded',
-        'retryResults.$': '$.retryResults[*]',
-        'allResults.$': "States.ArrayConcat($.classifiedResults.succeeded, $.retryResults[*])"
+        'allResults.$': "States.ArrayConcat($.classifiedResults.succeeded, States.JsonMerge(States.JsonMerge($.retryResults.Items, $.retryResults, false), [], false))"
       },
       resultPath: '$.mergedResults'
     });
