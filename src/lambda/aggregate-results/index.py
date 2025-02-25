@@ -131,9 +131,9 @@ class ResultAggregator:
 
             {
                 "summary": {
-                    "functional_changes": "2문장 이내의 기능적 변경사항 요약",
-                    "architectural_changes": "2문장 이내의 아키텍처 변경사항 요약",
-                    "technical_improvements": "2문장 이내의 기술적 개선사항 요약"
+                    "functional_changes": "기능적 변경사항 요약",
+                    "architectural_changes": "아키텍처 변경사항 요약",
+                    "technical_improvements": "기술적 개선사항 요약"
                 }
             }
 
@@ -152,7 +152,7 @@ class ResultAggregator:
                 "max_tokens": 1000,
                 "temperature": 0.7,
                 "top_p": 0.9,
-                "system": "2문장 이내로 간결하게 요약하는 전문 리뷰어입니다.",
+                "system": "5문장 이내로 간결하게 요약하는 전문 리뷰어입니다.",
                 "messages": [
                     {
                         "role": "user",
