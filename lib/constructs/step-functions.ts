@@ -58,6 +58,11 @@ export class ReviewBotStepFunctions extends Construct {
       resultPath: '$.classifiedResults'
     });
 
+    // 대기 상태
+    const waitBeforeRetry = new stepfunctions.Wait(this, 'WaitBeforeRetry', {
+      time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(2))
+    });
+
     // 실패한 청크가 있는 경우 재시도할 Map 상태
     const retryFailedChunks = new stepfunctions.Map(this, 'RetryFailedChunks', {
       inputPath: '$.classifiedResults',
@@ -69,11 +74,6 @@ export class ReviewBotStepFunctions extends Construct {
       payloadResponseOnly: true,
       retryOnServiceExceptions: true
     }));
-
-    // 대기 상태
-    const waitBeforeRetry = new stepfunctions.Wait(this, 'WaitBeforeRetry', {
-      time: stepfunctions.WaitTime.duration(cdk.Duration.seconds(2))
-    });
 
     // 재처리 결과와 원본 성공 결과 병합
     const mergeResults = new stepfunctions.Pass(this, 'MergeResults', {
@@ -160,7 +160,7 @@ export class ReviewBotStepFunctions extends Construct {
       task.addRetry(defaultRetry);
     });
 
-    // 실패한 청크 재처리를 위한 Choice 상태 - Choice 이후 로직 수정
+    // 실패한 청크 재처리를 위한 Choice 상태 - 수정된 부분
     const checkFailedChunks = new stepfunctions.Choice(this, 'CheckFailedChunks');
     
     // Choice 이후 경로 정의
@@ -172,7 +172,10 @@ export class ReviewBotStepFunctions extends Construct {
       )
       .otherwise(mergeResults);
 
-    // Create State Machine - 단순화된 워크플로우
+    // 이후 워크플로우 단계들을 설정
+    const finalChain = mergeResults.next(aggregateResults).next(postResults).next(success);
+
+    // Create State Machine - 수정된 워크플로우 정의
     this.stateMachine = new stepfunctions.StateMachine(this, 'PRReviewStateMachine', {
       stateMachineName: 'PR-REVIEWER',
       definitionBody: stepfunctions.DefinitionBody.fromChainable(
@@ -180,10 +183,7 @@ export class ReviewBotStepFunctions extends Construct {
           .next(splitPr)
           .next(processChunks)
           .next(classifyResults)
-          .next(checkFailedChunks) // Choice 상태 이후의 로직은 Choice 내에서 정의됨
-          .next(aggregateResults)
-          .next(postResults)
-          .next(success)
+          .next(checkFailedChunks) // 여기서 체인이 연결될 수 있도록 수정
       ),
       role: props.role,
       timeout: cdk.Duration.minutes(30),
