@@ -6,6 +6,7 @@ interface ReviewBotRoleProps {
   secrets: { [key: string]: cdk.aws_secretsmanager.ISecret };
   region: string;
   account: string;
+  dynamodbTableArn: string;
 }
 
 export class ReviewBotRole extends Construct {
@@ -67,5 +68,29 @@ export class ReviewBotRole extends Construct {
         }
       }
     }));
+
+    // DynamoDB 권한 추가
+    this.role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'dynamodb:PutItem',
+        'dynamodb:GetItem',
+        'dynamodb:Query',
+        'dynamodb:Scan',
+        'dynamodb:BatchGetItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:DeleteItem'
+      ],
+      resources: [
+        props.dynamodbTableArn,
+        `${props.dynamodbTableArn}/index/*`
+      ]
+    }));
+
+    // CloudFormation 출력
+    new cdk.CfnOutput(this, 'RoleArn', {
+      value: this.role.roleArn,
+      description: 'ARN of the ReviewBot Lambda role'
+    });
   }
 }

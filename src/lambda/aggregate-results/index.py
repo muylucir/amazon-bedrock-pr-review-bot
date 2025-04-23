@@ -22,6 +22,11 @@ class ReviewSummary:
     functional_changes: List[str]
     architectural_changes: List[str]
     technical_improvements: List[str]
+    # 이전 리뷰와의 비교를 위한 필드 추가
+    previous_reviews_count: int = 0
+    resolved_issues_count: int = 0
+    new_issues_count: int = 0
+    persistent_issues_count: int = 0
 
 class ResultAggregator:
     def __init__(self, event_data: Dict[str, Any]):
@@ -31,6 +36,14 @@ class ResultAggregator:
         self.pr_details = self._extract_pr_details()
         self.secrets = boto3.client('secretsmanager')
         self.config = self._load_config()
+        self.previous_reviews = []
+    
+        # PR 정보가 있는 경우 이전 리뷰 로드
+        if self.pr_details and 'repository' in self.pr_details and 'pr_id' in self.pr_details:
+            self.previous_reviews = self._get_previous_reviews(
+                self.pr_details['repository'], 
+                self.pr_details['pr_id']
+            )
 
     def _load_config(self) -> Dict[str, Any]:
         """Parameter Store에서 설정 로드"""
@@ -244,6 +257,9 @@ class ResultAggregator:
                 architectural_changes.update(summary.get('architectural_changes', []))
                 technical_improvements.update(summary.get('technical_improvements', []))
 
+        # 이전 리뷰와 비교
+        comparison_result = self._compare_with_previous_reviews(all_issues)
+
         return ReviewSummary(
             total_files=len(primary_files) + len(reference_files),
             total_primary_files=len(primary_files),
@@ -258,23 +274,36 @@ class ResultAggregator:
             functional_changes=sorted(list(functional_changes)),
             architectural_changes=sorted(list(architectural_changes)),
             technical_improvements=sorted(list(technical_improvements))
+            previous_reviews_count=comparison_result['previous_reviews_count'],
+            resolved_issues_count=len(comparison_result['resolved_issues']),
+            new_issues_count=len(comparison_result['new_issues']),
+            persistent_issues_count=len(comparison_result['persistent_issues'])
         )
 
     def generate_markdown_report(self, summary: ReviewSummary) -> str:
         pr_title = self.pr_details.get('title', 'Unknown PR')
         pr_author = self.pr_details.get('author', 'Unknown Author')
-
+    
         report = [
             f"# 🧾 Code Review Report: {pr_title}",
             f"\nGenerated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-
+    
             "\n## Overview",
             f"- Pull Request by: {pr_author}",
             f"- Primary Files Reviewed: {summary.total_primary_files}",
             f"- Reference Files: {summary.total_reference_files}",
             f"- Total Issues Found: {summary.total_issues}",
         ]
-
+        
+        # 이전 리뷰가 있는 경우 비교 정보 추가
+        if summary.previous_reviews_count > 0:
+            report.extend([
+                f"- Previous Reviews: {summary.previous_reviews_count}",
+                f"- Resolved Issues: {summary.resolved_issues_count}",
+                f"- New Issues: {summary.new_issues_count}",
+                f"- Persistent Issues: {summary.persistent_issues_count}"
+            ])
+    
         if summary.functional_changes or summary.architectural_changes or summary.technical_improvements:
             # 모든 변경사항 통합
             all_changes = {
@@ -285,7 +314,7 @@ class ResultAggregator:
         
             # Bedrock을 사용하여 요약
             summarized_changes = self._summarize_changes_with_bedrock(all_changes)
-
+    
             report.extend([
                 "\n## Key Changes Summary",
                 "\n### 🔄 Functional Changes",
@@ -295,27 +324,59 @@ class ResultAggregator:
                 "\n### 🔧 Technical Improvements",
                 summarized_changes.get('technical_improvements', '')
             ])
-
+        
+        # 이전 리뷰 대비 변경 사항 (있는 경우)
+        if summary.previous_reviews_count > 0:
+            report.append("\n## Review History Analysis")
+            
+            # 해결된 이슈
+            if summary.resolved_issues_count > 0:
+                report.append("\n### ✅ Resolved Issues")
+                comparison_result = self._compare_with_previous_reviews([])
+                
+                for issue in comparison_result['resolved_issues']:
+                    report.extend([
+                        f"\n- **{issue['file']}** (Line {issue['line_number']})",
+                        f"  - {issue['description']}"
+                    ])
+                
+                if len(comparison_result['resolved_issues']) < summary.resolved_issues_count:
+                    report.append(f"\n... and {summary.resolved_issues_count - len(comparison_result['resolved_issues'])} more resolved issues.")
+            
+            # 지속적인 이슈
+            if summary.persistent_issues_count > 0:
+                report.append("\n### ⚠️ Persistent Issues")
+                comparison_result = self._compare_with_previous_reviews([])
+                
+                for issue in comparison_result['persistent_issues']:
+                    report.extend([
+                        f"\n- **{issue['file']}** (Line {issue['line_number']})",
+                        f"  - {issue['description']}"
+                    ])
+                
+                if len(comparison_result['persistent_issues']) < summary.persistent_issues_count:
+                    report.append(f"\n... and {summary.persistent_issues_count - len(comparison_result['persistent_issues'])} more persistent issues.")
+    
         report.extend([
             "\n## Severity Summary",
             "| Severity | Count |",
             "|----------|-------|"
         ])
-
+    
         # 심각도 요약 테이블
         for severity, count in sorted(summary.severity_counts.items()):
             report.append(f"| {severity} | {count} |")
-
+    
         # 카테고리 요약 테이블    
         report.extend([
             "\n## Category Summary",
             "| Category | Count |",
             "|----------|-------|"
         ])
-
+    
         for category, count in sorted(summary.category_counts.items()):
             report.append(f"| {category.title()} | {count} |")
-
+    
         # 중요 이슈 섹션
         if summary.critical_issues:
             report.append("\n## Critical Issues")
@@ -325,7 +386,7 @@ class ResultAggregator:
                     f"**Issue:** {issue['description']}",
                     f"**Suggestion:** {issue['suggestion']}"
                 ])
-
+        
         if summary.major_issues:
             report.append("\n## Major Issues")
             for issue in summary.major_issues:
@@ -334,7 +395,7 @@ class ResultAggregator:
                     f"**Issue:** {issue['description']}",
                     f"**Suggestion:** {issue['suggestion']}"
                 ])
-
+    
         # 파일별 상세 리뷰
         report.append("\n## Detailed Review by File")
         
@@ -343,13 +404,13 @@ class ResultAggregator:
             "\n| File | Line | Category | Severity | Description | Suggestion |",
             "|------|------|-----------|-----------|--------------|-------------|"
         ])
-
+    
         # 모든 파일의 제안사항을 하나의 리스트로 통합
         all_suggestions = []
         for file_path, suggestions in summary.suggestions_by_file.items():
             for suggestion in suggestions:
                 all_suggestions.append((file_path, suggestion))
-
+    
         # 파일명과 라인 번호로 정렬
         sorted_suggestions = sorted(
             all_suggestions,
@@ -363,13 +424,13 @@ class ResultAggregator:
                 x[1]['line_number']
             )
         )
-
+    
         # 테이블 생성
         for file_path, suggestion in sorted_suggestions:
             # 마크다운 테이블에서 파이프(|) 문자 이스케이프
             description = suggestion.get('description', 'N/A').replace('|', '\\|')
             suggestion_text = suggestion.get('suggestion', 'N/A').replace('|', '\\|')
-
+    
             report.append(
                 f"| {file_path} | {suggestion['line_number']} | "
                 f"{suggestion.get('category', 'Other').title()} | "
@@ -377,7 +438,7 @@ class ResultAggregator:
                 f"{description} | "
                 f"{suggestion_text} |"
             )
-
+    
         # 파일 의존성 정보를 별도 섹션으로 분리
         report.append("\n### File Dependencies")
         for file_path, ref_files in sorted(summary.reference_context.items()):
@@ -389,7 +450,7 @@ class ResultAggregator:
                 dedup_ref_files = list(set(ref_files))
                 for ref_file in sorted(dedup_ref_files):
                     report.append(f"- {ref_file}")
-
+    
         # 추가 정보 및 메타데이터
         report.extend([
             "\n## Additional Information",
@@ -399,13 +460,13 @@ class ResultAggregator:
             f"- Repository: {self.pr_details.get('repository', 'Unknown')}",
             f"- PR Number: {self.pr_details.get('pr_id', 'Unknown')}"
         ])
-
+    
         # 리포트 하단에 자동 생성 표시
         report.extend([
             "\n---",
             "🤖 _This report was automatically generated by PR Review Bot & Amazon Bedrock_ 🧾"
         ])
-
+    
         return '\n'.join(report)
 
     def prepare_pr_comment(self, summary: ReviewSummary) -> str:
@@ -443,6 +504,17 @@ class ResultAggregator:
             
             if len(summary.major_issues) > 5:
                 comment.append(f"\n... and {len(summary.major_issues) - 5} more major issues.")
+        
+        # 이전 리뷰 비교 정보 추가
+        if summary.previous_reviews_count > 0:
+            comment.extend([
+                "\n## Review History",
+                f"- Previous Reviews: {summary.previous_reviews_count}",
+                f"- Resolved Issues: {summary.resolved_issues_count}",
+                f"- New Issues: {summary.new_issues_count}",
+                f"- Persistent Issues: {summary.persistent_issues_count}"
+            ])
+        
         
         return '\n'.join(comment)
 
@@ -565,9 +637,119 @@ class ResultAggregator:
                 ]
             })
         
+                # 이전 리뷰와 비교 정보 추가
+        if summary.previous_reviews_count > 0:
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*Review History:*\n✅ Resolved: {summary.resolved_issues_count} | 🆕 New: {summary.new_issues_count} | ⚠️ Persistent: {summary.persistent_issues_count}"
+                }
+            })
+        
+        
         return {
             "blocks": blocks,
             "text": f"Code Review completed for PR: {shortened_title} - Found {summary.total_issues} issues in {summary.total_primary_files} primary files"  # 폴백 텍스트
+        }
+
+    def _get_previous_reviews(self, repository: str, pr_id: str) -> List[Dict[str, Any]]:
+        """동일한 PR에 대한 이전 리뷰 결과 조회"""
+        try:
+            response = self.results_table.query(
+                IndexName='repository-pr-index',
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('repository').eq(repository) &
+                                      boto3.dynamodb.conditions.Key('pr_id').eq(pr_id),
+                ScanIndexForward=False  # 최신 항목부터 조회
+            )
+
+            # 현재 실행 ID가 아닌 이전 실행의 결과만 필터링
+            previous_reviews = []
+            execution_ids = set()
+
+            for item in response.get('Items', []):
+                exec_id = item.get('execution_id')
+                if exec_id != self.execution_id and exec_id not in execution_ids:
+                    execution_ids.add(exec_id)
+                    previous_reviews.append(item)
+
+                    # 최근 5개 실행만 가져옴
+                    if len(previous_reviews) >= 5:
+                        break
+
+            print(f"Found {len(previous_reviews)} previous reviews for PR {repository}/{pr_id}")
+            return previous_reviews
+
+        except Exception as e:
+            print(f"Error retrieving previous reviews: {e}")
+            return []
+
+
+    def _compare_with_previous_reviews(self, current_issues: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """현재 이슈와 이전 리뷰의 이슈를 비교"""
+        if not self.previous_reviews:
+            return {
+                'previous_reviews_count': 0,
+                'resolved_issues': [],
+                'new_issues': current_issues,
+                'persistent_issues': []
+            }
+
+        # 가장 최근 리뷰의 결과 가져오기
+        latest_review = self.previous_reviews[0]
+        previous_results = []
+
+        # 이전 리뷰에서 모든 이슈 수집
+        for item in self.results_table.query(
+            KeyConditionExpression=boto3.dynamodb.conditions.Key('execution_id').eq(latest_review.get('execution_id'))
+        ).get('Items', []):
+            if 'results' in item:
+                for result in item['results']:
+                    for suggestion in result.get('suggestions', []):
+                        previous_results.append({
+                            'file': result['file_path'],
+                            'line_number': suggestion.get('line_number', 'N/A'),
+                            'description': suggestion.get('description', ''),
+                            'severity': suggestion.get('severity', 'NORMAL')
+                        })
+
+        # 현재 이슈와 이전 이슈 비교
+        current_issue_keys = {
+            f"{issue['file']}:{issue['line_number']}:{issue['description'][:50]}"
+            for issue in current_issues
+        }
+
+        previous_issue_keys = {
+            f"{issue['file']}:{issue['line_number']}:{issue['description'][:50]}"
+            for issue in previous_results
+        }
+
+        # 해결된 이슈, 새로운 이슈, 지속적인 이슈 식별
+        resolved_keys = previous_issue_keys - current_issue_keys
+        new_keys = current_issue_keys - previous_issue_keys
+        persistent_keys = current_issue_keys & previous_issue_keys
+
+        # 원본 이슈 객체 찾기
+        resolved_issues = [
+            issue for issue in previous_results
+            if f"{issue['file']}:{issue['line_number']}:{issue['description'][:50]}" in resolved_keys
+        ]
+
+        new_issues = [
+            issue for issue in current_issues
+            if f"{issue['file']}:{issue['line_number']}:{issue['description'][:50]}" in new_keys
+        ]
+
+        persistent_issues = [
+            issue for issue in current_issues
+            if f"{issue['file']}:{issue['line_number']}:{issue['description'][:50]}" in persistent_keys
+        ]
+
+        return {
+            'previous_reviews_count': len(self.previous_reviews),
+            'resolved_issues': resolved_issues[:10],  # 상위 10개만 표시
+            'new_issues': new_issues[:10],  # 상위 10개만 표시
+            'persistent_issues': persistent_issues[:10]  # 상위 10개만 표시
         }
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -599,7 +781,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     'total_reference_files': summary.total_reference_files,
                     'total_issues': summary.total_issues,
                     'severity_counts': summary.severity_counts,
-                    'category_counts': summary.category_counts
+                    'category_counts': summary.category_counts,
+                    'previous_reviews_count': summary.previous_reviews_count,
+                    'resolved_issues_count': summary.resolved_issues_count,
+                    'new_issues_count': summary.new_issues_count,
+                    'persistent_issues_count': summary.persistent_issues_count
                 },
                 'markdown_report': markdown_report,
                 'pr_comment': pr_comment,

@@ -8,6 +8,7 @@ import { LambdaLayers } from './constructs/lambda-layer';
 import { ReviewBotLambda } from './constructs/lambda';
 import { ReviewBotApi } from './constructs/api-gateway';
 import { ReviewBotStepFunctions } from './constructs/step-functions';
+import { ReviewBotDynamoDB } from './constructs/dynamodb';
 
 export class AmazonBedrockPrReviewbotStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: cdk.StackProps & ReviewBotProps) {
@@ -16,11 +17,15 @@ export class AmazonBedrockPrReviewbotStack extends cdk.Stack {
     // Create Secrets and Parameters
     const secretsAndParams = new SecretsAndParameters(this, 'SecretsAndParams', props);
 
-    // Create Lambda Role
+    // Create DynamoDB Table
+    const dynamodb = new ReviewBotDynamoDB(this, 'ReviewBotDynamoDB');
+
+    // Create Lambda Role with DynamoDB access
     const lambdaRole = new ReviewBotRole(this, 'ReviewBotRole', {
       secrets: secretsAndParams.secrets,
       region: this.region,
-      account: this.account
+      account: this.account,
+      dynamodbTableArn: dynamodb.resultsTable.tableArn
     }).role;
 
     // Create Lambda Layers
@@ -50,13 +55,18 @@ export class AmazonBedrockPrReviewbotStack extends cdk.Stack {
     });
 
     // Add stack outputs
-    this.addOutputs(stepFunctions);
+    this.addOutputs(stepFunctions, dynamodb);
   }
 
-  private addOutputs(stepFunctions: ReviewBotStepFunctions) {
+  private addOutputs(stepFunctions: ReviewBotStepFunctions, dynamodb: ReviewBotDynamoDB) {
     new cdk.CfnOutput(this, 'StateMachineArn', {
       value: stepFunctions.stateMachine.stateMachineArn,
       description: 'State Machine ARN'
+    });
+
+    new cdk.CfnOutput(this, 'DynamoDBTableName', {
+      value: dynamodb.resultsTable.tableName,
+      description: 'DynamoDB Table Name for PR Review results'
     });
   }
 }

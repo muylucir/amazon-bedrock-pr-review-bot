@@ -5,6 +5,7 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
 import botocore
 import re
+from datetime import datetime
 
 @dataclass
 class ReviewResult:
@@ -31,6 +32,8 @@ class ChunkProcessor:
         self.chunk_data = event_data
         self.config = self.chunk_data.get('pr_details', {}).get('config', {})
         self.bedrock = boto3.client('bedrock-runtime', region_name=self.config.get('aws_region'))
+        self.dynamodb = boto3.resource('dynamodb')
+        self.results_table = self.dynamodb.Table('PRReviewerResults')
 
     def _detect_language(self, file_path: str) -> str:
         """파일 확장자 기반 프로그래밍 언어 감지"""
@@ -283,17 +286,50 @@ Detected Patterns:
             is_primary=is_primary,
             referenced_by=related_files
         )
+    
+    def store_results_in_dynamodb(self, execution_id: str, chunk_id: str, chunk_results: List[Dict[str, Any]], severity: str, pr_details: Dict[str, Any]) -> bool:
+        """DynamoDB에 분석 결과 저장"""
+        try:
+            # TTL 값 설정 (30일 후 만료)
+            ttl = int((datetime.now().timestamp() + (30 * 24 * 60 * 60)))
+            
+            # PR 정보 추출
+            repository = pr_details.get('repository', 'unknown')
+            pr_id = pr_details.get('pr_id', 'unknown')
+            
+            # DynamoDB에 결과 저장
+            self.results_table.put_item(
+                Item={
+                    'execution_id': execution_id,
+                    'chunk_id': chunk_id,
+                    'repository': repository,  # PR 식별을 위한 필드 추가
+                    'pr_id': pr_id,           # PR 식별을 위한 필드 추가
+                    'review_time': datetime.now().isoformat(),  # 리뷰 시간 기록
+                    'results': chunk_results,
+                    'severity': severity,
+                    'pr_details': pr_details,
+                    'timestamp': datetime.now().isoformat(),
+                    'ttl': ttl
+                }
+            )
+            return True
+        except Exception as e:
+            print(f"Error storing results in DynamoDB: {e}")
+            return False
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Lambda 핸들러"""
     try:
-
         processor = ChunkProcessor(event)
         chunk_results = []
         
         # PR 상세 정보 추출
         pr_details = processor.chunk_data.get('pr_details', {})
-
+        chunk_id = processor.chunk_data.get('chunk_id')
+        
+        # 실행 ID 추출 - Step Functions에서 사용하는 실행 ID
+        execution_id = event.get('execution_id', f"manual-{int(datetime.now().timestamp())}")
+        
         # 청크 내의 각 파일 처리
         for file_data in processor.chunk_data.get('files', []):
             try:
@@ -330,14 +366,29 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             for s in r.get('suggestions', [])
         ]
         chunk_severity = processor._determine_severity(primary_suggestions)
+        
+        # DynamoDB에 결과 저장
+        storage_success = processor.store_results_in_dynamodb(
+            execution_id, 
+            chunk_id, 
+            chunk_results, 
+            chunk_severity, 
+            pr_details
+        )
 
+        # Step Functions에 최소한의 정보만 반환
         return {
             'statusCode': 200,
             'body': json.dumps({
-                'chunk_id': processor.chunk_data.get('chunk_id'),
+                'chunk_id': chunk_id,
+                'execution_id': execution_id,
                 'chunk_severity': chunk_severity,
-                'results': chunk_results,
-                'pr_details': pr_details
+                'files_count': len(chunk_results),
+                'primary_files_count': sum(1 for r in chunk_results if r['is_primary']),
+                'reference_files_count': sum(1 for r in chunk_results if not r['is_primary']),
+                'stored_in_dynamodb': storage_success,
+                'repository': pr_details.get('repository', 'unknown'),  # PR 식별 정보 추가
+                'pr_id': pr_details.get('pr_id', 'unknown')            # PR 식별 정보 추가
             }, ensure_ascii=False)
         }
 
@@ -347,6 +398,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'statusCode': 500,
             'body': json.dumps({
                 'error': str(e),
-                'chunk_id': None
+                'chunk_id': event.get('chunk_data', {}).get('chunk_id', None)
             })
         }
