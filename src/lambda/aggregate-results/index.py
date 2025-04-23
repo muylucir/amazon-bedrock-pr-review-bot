@@ -3,8 +3,26 @@ import os
 from typing import Dict, List, Any, Union
 from dataclasses import dataclass
 from collections import defaultdict
+from decimal import Decimal
 import boto3
 from datetime import datetime
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super(DecimalEncoder, self).default(obj)
+
+def convert_decimal(obj):
+    """DynamoDB Decimal 타입을 float로 변환"""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    elif isinstance(obj, dict):
+        return {k: convert_decimal(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_decimal(v) for v in obj]
+    return obj
+
 
 @dataclass
 class ReviewSummary:
@@ -156,20 +174,18 @@ class ResultAggregator:
             )
             
             if response.get('Items'):
-                pr_details = response['Items'][0].get('pr_details', {})
-                print(f"Extracted PR details: {json.dumps(pr_details)}")
+                pr_details = convert_decimal(response['Items'][0].get('pr_details', {}))
+                print(f"Extracted PR details: {json.dumps(pr_details, cls=DecimalEncoder)}")
                 return pr_details
             
             # DynamoDB에서 정보를 찾지 못한 경우 입력 이벤트에서 직접 추출 시도
             if isinstance(self.event_data, dict):
-                # 원본 이벤트에서 PR 상세 정보 찾기
                 pr_details = {}
-                # 다양한 경로 시도
                 if 'body' in self.event_data and 'pr_details' in self.event_data['body']:
                     pr_details = self.event_data['body']['pr_details']
                 
                 if pr_details:
-                    print(f"Extracted PR details from event data: {json.dumps(pr_details)}")
+                    print(f"Extracted PR details from event data: {json.dumps(pr_details, cls=DecimalEncoder)}")
                     return pr_details
                 
             print("Failed to extract PR details from DynamoDB or event data")
@@ -178,6 +194,10 @@ class ResultAggregator:
         except Exception as e:
             print(f"Error extracting PR details: {e}")
             return {}
+    
+            except Exception as e:
+                print(f"Error extracting PR details: {e}")
+                return {}
 
     def _extract_chunk_results(self) -> List[Dict[str, Any]]:
         """청크 결과 추출"""
