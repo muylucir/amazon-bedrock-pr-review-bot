@@ -1,9 +1,11 @@
 # Amazon Bedrock PR Review Bot
 
-Amazon Bedrock을 활용해 생성된 Pull request에 대해 자동으로 Code review를 제공하는 애플리케이션입니다. 
+Amazon Bedrock을 활용해 생성된 Pull request에 대해 자동으로 Code review를 제공하는 애플리케이션입니다.
 AWS CDK로 구축되었으며, GitHub, GitLab, Bitbucket과 통합되어 Slack 알림과 함께 상세한 코드 리뷰를 제공합니다.
 
-PR에 여러 파일이 포함될 때 Amazon Bedrock PR Review Bot은 파일 간의 관계를 분석하여 연관된 파일들을 함께 검토함으로써 더 정확하고 의미 있는 리뷰를 제공합니다.
+PR에 여러 파일이 포함될 때 Amazon Bedrock PR Review Bot은 파일 간의 관계를 분석하여 연관된 파일들을 함께 검토함으로써 더 정확하고 의미 있는 리뷰를 제공합니다. 
+
+또한 이전 리뷰와 현재 리뷰를 비교하여 해결된 이슈, 새로운 이슈, 지속되는 이슈를 추적하고 품질 개선의 진행 상황을 시각화합니다.
 
 
 ```mermaid
@@ -61,6 +63,7 @@ graph TD
 - AWS Step Functions: 워크플로우 오케스트레이션
 - AWS Lambda: 서버리스 컴퓨팅
 - Amazon Bedrock: AI 기반 코드 리뷰
+- Amazon DynamoDB: 리뷰 결과 저장 및 이력 관리
 - AWS Secrets Manager와 Parameter Store: 설정 관리
 - Amazon CloudWatch: 모니터링 및 로깅
 
@@ -202,6 +205,16 @@ aws ssm put-parameter --name /pr-reviewer/config/repo_type --value <github | git
 4. (Option) 설정된 Slack 채널로 요약 전송 (Slack 알림을 사용하려면 Parameter Store의 /pr-reviewer/config/slack_notification 값을 "enable"로 변경하고, Secret Manager의 /pr-reviewer/tokens/slack에 Token을 입력합니다.)
 
 [샘플 Report 보기](https://github.com/muylucir/amazon-bedrock-pr-review-bot/blob/main/docs/sample_report.md)
+
+## 리뷰 데이터 관리
+리뷰 데이터는 DynamoDB에 자동으로 저장되어 다음과 같은 이점을 제공합니다:
+
+- 리뷰 이력 추적: 동일한 PR에 대한 여러 리뷰 결과를 시간순으로 저장
+- 이슈 개선 분석: 해결된 이슈, 새로운 이슈, 지속되는 이슈를 비교 분석
+- 대용량 데이터 처리: Lambda 함수 간 페이로드 크기 제한 우회
+
+저장된 데이터는 30일 후 TTL(Time-To-Live)에 의해 자동으로 삭제됩니다.
+
 
 ## 모니터링
 
