@@ -308,17 +308,17 @@ Detected Patterns:
     def store_results_in_dynamodb(self, execution_id: str, chunk_id: str, chunk_results: List[Dict[str, Any]], severity: str, pr_details: Dict[str, Any]) -> bool:
         """DynamoDB에 분석 결과 저장"""
         try:
-            # TTL 값 설정 (30일 후 만료)
-            ttl = int((datetime.now().timestamp() + (30 * 24 * 60 * 60)))
-            
+            # TTL 값 설정 (1일 후 만료)
+            ttl = int((datetime.now().timestamp() + (1 * 24 * 60 * 60)))
+
             # PR 정보 추출
             repository = pr_details.get('repository', 'unknown')
             pr_id = pr_details.get('pr_id', 'unknown')
-            
+
             # float 값을 DynamoDB에 저장 가능한 Decimal로 변환
             processed_chunk_results = convert_floats_to_decimals(chunk_results)
             processed_pr_details = convert_floats_to_decimals(pr_details)
-            
+
             # DynamoDB에 결과 저장
             self.results_table.put_item(
                 Item={
