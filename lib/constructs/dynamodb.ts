@@ -15,8 +15,7 @@ export class ReviewBotDynamoDB extends Construct {
       sortKey: { name: 'chunk_id', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
-      timeToLiveAttribute: 'ttl', // 30일 자동 만료 설정
-      pointInTimeRecoverySpecification: true
+      timeToLiveAttribute: 'ttl'
     });
 
     // 비용 최적화를 위한 TTL(Time-To-Live) 인덱스 활성화
