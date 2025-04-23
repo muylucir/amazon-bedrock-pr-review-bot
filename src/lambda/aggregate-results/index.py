@@ -194,10 +194,6 @@ class ResultAggregator:
         except Exception as e:
             print(f"Error extracting PR details: {e}")
             return {}
-    
-            except Exception as e:
-                print(f"Error extracting PR details: {e}")
-                return {}
 
     def _extract_chunk_results(self) -> List[Dict[str, Any]]:
         """청크 결과 추출"""
