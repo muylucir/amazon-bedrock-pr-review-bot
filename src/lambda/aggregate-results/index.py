@@ -22,28 +22,107 @@ class ReviewSummary:
     functional_changes: List[str]
     architectural_changes: List[str]
     technical_improvements: List[str]
-    # 이전 리뷰와의 비교를 위한 필드 추가
+    # 이전 리뷰와의 비교
     previous_reviews_count: int = 0
     resolved_issues_count: int = 0
     new_issues_count: int = 0
     persistent_issues_count: int = 0
+    # 모든 이슈 목록 추가
+    all_issues: List[Dict[str, Any]] = None  # 기본값은 None
+    
+    def __post_init__(self):
+        if self.all_issues is None:
+            self.all_issues = []
 
 class ResultAggregator:
     def __init__(self, event_data: Dict[str, Any]):
         self.ssm = boto3.client('ssm')
         self.event_data = event_data
-        self.chunk_results = self._extract_chunk_results()
+        self.dynamodb = boto3.resource('dynamodb')
+        self.results_table = self.dynamodb.Table('PRReviewerResults')
+        
+        # 실행 ID 먼저 추출
+        try:
+            self.execution_id = self._extract_execution_id()
+            print(f"Extracted execution_id: {self.execution_id}")
+        except Exception as e:
+            print(f"Error extracting execution ID: {e}")
+            self.execution_id = f"error-{int(datetime.now().timestamp())}"
+    
+        # 그 다음 청크 결과 로드
+        self.chunk_results = self._load_chunk_results_from_dynamodb()
+        
+        # 나머지 초기화
         self.pr_details = self._extract_pr_details()
         self.secrets = boto3.client('secretsmanager')
         self.config = self._load_config()
         self.previous_reviews = []
-    
+        
         # PR 정보가 있는 경우 이전 리뷰 로드
         if self.pr_details and 'repository' in self.pr_details and 'pr_id' in self.pr_details:
             self.previous_reviews = self._get_previous_reviews(
                 self.pr_details['repository'], 
                 self.pr_details['pr_id']
             )
+
+
+    def _load_chunk_results_from_dynamodb(self) -> List[Dict[str, Any]]:
+        """DynamoDB에서 청크 결과 로드"""
+        results = []
+        try:
+            # 실행 ID가 설정되었는지 확인
+            if not hasattr(self, 'execution_id') or not self.execution_id:
+                print("Execution ID not set, cannot load chunk results")
+                return []
+
+            # 현재 실행에 대한 모든 청크 결과 조회
+            response = self.results_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('execution_id').eq(self.execution_id)
+            )
+
+            if 'Items' in response:
+                for item in response['Items']:
+                    if 'results' in item:  # 결과가 있는 항목만 처리
+                        results.extend(item['results'])
+
+            print(f"Loaded {len(results)} chunk results from DynamoDB")
+            return results
+        except Exception as e:
+            print(f"Error loading chunk results from DynamoDB: {e}")
+            return []
+
+    def _extract_execution_id(self) -> str:
+        """이벤트에서 실행 ID 추출"""
+        try:
+            # Step Functions 맵 상태에서 오는 결과 목록에서 실행 ID 추출
+            if isinstance(self.event_data, dict):
+                classified_results = self.event_data.get('classifiedResults', {})
+                succeeded_results = classified_results.get('succeeded', [])
+                retry_results = self.event_data.get('retryResults', [])
+
+                all_results = succeeded_results + retry_results
+
+                if all_results:
+                    for result in all_results:
+                        if isinstance(result, dict) and result.get('body'):
+                            body = json.loads(result['body']) if isinstance(result['body'], str) else result['body']
+                            if execution_id := body.get('execution_id'):
+                                return execution_id
+
+                # 실행 ID를 찾지 못한 경우 임시 ID 생성
+                temp_id = f"unknown-{int(datetime.now().timestamp())}"
+                print(f"Could not find execution_id in event data, using generated ID: {temp_id}")
+                return temp_id
+
+            else:
+                temp_id = f"unknown-format-{int(datetime.now().timestamp())}"
+                print(f"Event data is not a dictionary, using generated ID: {temp_id}")
+                return temp_id
+
+        except Exception as e:
+            temp_id = f"error-{int(datetime.now().timestamp())}"
+            print(f"Error extracting execution ID: {e}, using generated ID: {temp_id}")
+            return temp_id
 
     def _load_config(self) -> Dict[str, Any]:
         """Parameter Store에서 설정 로드"""
@@ -70,21 +149,32 @@ class ResultAggregator:
     def _extract_pr_details(self) -> Dict[str, Any]:
         """PR 상세 정보 추출"""
         try:
-            if isinstance(self.event_data, list) and self.event_data:
-                # 병렬 처리 결과
-                for chunk in self.event_data:
-                    if isinstance(chunk, dict) and chunk.get('body'):
-                        body = json.loads(chunk['body'])
-                        if pr_details := body.get('pr_details'):
-                            return pr_details
-            elif isinstance(self.event_data, dict):
-                # 단일 처리 결과
-                if self.event_data.get('body'):
-                    body = json.loads(self.event_data['body'])
-                    if pr_details := body.get('pr_details'):
-                        return pr_details
-
+            # DynamoDB에서 하나의 항목만 가져와 PR 상세 정보 추출
+            response = self.results_table.query(
+                KeyConditionExpression=boto3.dynamodb.conditions.Key('execution_id').eq(self.execution_id),
+                Limit=1
+            )
+            
+            if response.get('Items'):
+                pr_details = response['Items'][0].get('pr_details', {})
+                print(f"Extracted PR details: {json.dumps(pr_details)}")
+                return pr_details
+            
+            # DynamoDB에서 정보를 찾지 못한 경우 입력 이벤트에서 직접 추출 시도
+            if isinstance(self.event_data, dict):
+                # 원본 이벤트에서 PR 상세 정보 찾기
+                pr_details = {}
+                # 다양한 경로 시도
+                if 'body' in self.event_data and 'pr_details' in self.event_data['body']:
+                    pr_details = self.event_data['body']['pr_details']
+                
+                if pr_details:
+                    print(f"Extracted PR details from event data: {json.dumps(pr_details)}")
+                    return pr_details
+                
+            print("Failed to extract PR details from DynamoDB or event data")
             return {}
+                
         except Exception as e:
             print(f"Error extracting PR details: {e}")
             return {}
@@ -206,42 +296,47 @@ class ResultAggregator:
         # primary/reference 파일 구분
         primary_files = []
         reference_files = []
+        all_issues = []
 
         for result in self.chunk_results:
             file_path = result['file_path']
-            
+
             if result.get('is_primary', True):
                 primary_files.append(file_path)
                 severity_counts[result['severity']] += 1
-                
+
                 # 참조 파일 정보 저장
                 if referenced_by := result.get('referenced_by'):
                     reference_context[file_path].extend(referenced_by)
-                
+
                 for suggestion in result.get('suggestions', []):
                     total_issues += 1
                     category = suggestion.get('category', 'other')
                     severity = suggestion.get('severity', 'NORMAL')
-                    
+
                     category_counts[category] += 1
-                    
+
                     # 라인 번호 정규화
                     suggestion['line_number'] = self._normalize_line_number(
                         suggestion.get('line_number')
                     )
-                    
+
                     issue_details = {
                         'file': file_path,
                         'description': suggestion.get('description'),
                         'line_number': suggestion['line_number'],
-                        'suggestion': suggestion.get('suggestion')
+                        'suggestion': suggestion.get('suggestion'),
+                        'severity': severity,
+                        'category': category
                     }
-                    
+
+                    all_issues.append(issue_details)  # 이슈를 all_issues 리스트에 추가
+
                     if severity == 'CRITICAL':
                         critical_issues.append(issue_details)
                     elif severity == 'MAJOR':
                         major_issues.append(issue_details)
-                    
+
                     suggestions_by_file[file_path].append(suggestion)
             else:
                 reference_files.append(file_path)
@@ -273,11 +368,12 @@ class ResultAggregator:
             reference_context=dict(reference_context),
             functional_changes=sorted(list(functional_changes)),
             architectural_changes=sorted(list(architectural_changes)),
-            technical_improvements=sorted(list(technical_improvements))
+            technical_improvements=sorted(list(technical_improvements)),
             previous_reviews_count=comparison_result['previous_reviews_count'],
             resolved_issues_count=len(comparison_result['resolved_issues']),
             new_issues_count=len(comparison_result['new_issues']),
-            persistent_issues_count=len(comparison_result['persistent_issues'])
+            persistent_issues_count=len(comparison_result['persistent_issues']),
+            all_issues=all_issues  # all_issues 필드에 저장
         )
 
     def generate_markdown_report(self, summary: ReviewSummary) -> str:
@@ -755,22 +851,19 @@ class ResultAggregator:
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Lambda 핸들러"""
     try:
-
-         # 실패 청크 재시도 결과 처리
-        classified_results = event.get('classifiedResults', {})
-        succeeded_results = classified_results.get('succeeded', [])
-        retry_results = event.get('retryResults', [])
-
-        # 모든 결과 병합 (재시도 결과를 성공 결과에 추가)
-        all_results = succeeded_results + retry_results
-
+        # 실행 ID 설정: 이전의 청크 메타데이터의 execution_id를 사용
         # 결과 집계기 초기화 - event를 직접 전달
-        aggregator = ResultAggregator(all_results)
+        aggregator = ResultAggregator(event)
+        print(f"Initialized ResultAggregator with execution_id: {getattr(aggregator, 'execution_id', 'NOT_SET')}")
+        
         summary = aggregator.analyze_results()
         
+        # DynamoDB에서 로드한 데이터로 보고서 생성
         markdown_report = aggregator.generate_markdown_report(summary)
         pr_comment = aggregator.prepare_pr_comment(summary)
         slack_message = aggregator.prepare_slack_message(summary)
+        
+        execution_id = getattr(aggregator, 'execution_id', f"fallback-{int(datetime.now().timestamp())}")
         
         return {
             'statusCode': 200,
@@ -791,7 +884,8 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'pr_comment': pr_comment,
                 'slack_message': slack_message,
                 'pr_details': aggregator.pr_details,
-                'reference_context': summary.reference_context
+                'reference_context': summary.reference_context,
+                'execution_id': execution_id  # 안전하게 가져온 실행 ID 사용
             }, ensure_ascii=False)
         }
         

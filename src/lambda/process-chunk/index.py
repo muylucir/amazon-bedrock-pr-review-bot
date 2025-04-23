@@ -1,3 +1,4 @@
+import decimal
 import json
 import os
 import boto3
@@ -6,6 +7,23 @@ from dataclasses import dataclass
 import botocore
 import re
 from datetime import datetime
+
+# DynamoDB를 위한 JSON 직렬화 헬퍼 함수
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, decimal.Decimal):
+            return float(obj) if obj % 1 else int(obj)
+        return super(DecimalEncoder, self).default(obj)
+
+def convert_floats_to_decimals(obj: Any) -> Any:
+    """float 값을 DynamoDB에 저장 가능한 Decimal로 변환"""
+    if isinstance(obj, float):
+        return decimal.Decimal(str(obj))
+    elif isinstance(obj, dict):
+        return {k: convert_floats_to_decimals(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_floats_to_decimals(item) for item in obj]
+    return obj
 
 @dataclass
 class ReviewResult:
@@ -297,17 +315,21 @@ Detected Patterns:
             repository = pr_details.get('repository', 'unknown')
             pr_id = pr_details.get('pr_id', 'unknown')
             
+            # float 값을 DynamoDB에 저장 가능한 Decimal로 변환
+            processed_chunk_results = convert_floats_to_decimals(chunk_results)
+            processed_pr_details = convert_floats_to_decimals(pr_details)
+            
             # DynamoDB에 결과 저장
             self.results_table.put_item(
                 Item={
                     'execution_id': execution_id,
                     'chunk_id': chunk_id,
-                    'repository': repository,  # PR 식별을 위한 필드 추가
-                    'pr_id': pr_id,           # PR 식별을 위한 필드 추가
-                    'review_time': datetime.now().isoformat(),  # 리뷰 시간 기록
-                    'results': chunk_results,
+                    'repository': repository,
+                    'pr_id': pr_id,
+                    'review_time': datetime.now().isoformat(),
+                    'results': processed_chunk_results,
                     'severity': severity,
-                    'pr_details': pr_details,
+                    'pr_details': processed_pr_details,
                     'timestamp': datetime.now().isoformat(),
                     'ttl': ttl
                 }
