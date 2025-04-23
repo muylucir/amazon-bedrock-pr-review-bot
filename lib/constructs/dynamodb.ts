@@ -16,7 +16,7 @@ export class ReviewBotDynamoDB extends Construct {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       timeToLiveAttribute: 'ttl', // 30일 자동 만료 설정
-      pointInTimeRecovery: true
+      pointInTimeRecoverySpecification: true
     });
 
     // 비용 최적화를 위한 TTL(Time-To-Live) 인덱스 활성화
