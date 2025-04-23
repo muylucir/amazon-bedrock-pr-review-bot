@@ -7,6 +7,7 @@ interface ReviewBotRoleProps {
   region: string;
   account: string;
   dynamodbTableArn: string;
+  reportsTableArn: string; // New reports table ARN
 }
 
 export class ReviewBotRole extends Construct {
@@ -69,7 +70,7 @@ export class ReviewBotRole extends Construct {
       }
     }));
 
-    // DynamoDB 권한 추가
+    // DynamoDB 권한 추가 - 결과 테이블
     this.role.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: [
@@ -84,6 +85,24 @@ export class ReviewBotRole extends Construct {
       resources: [
         props.dynamodbTableArn,
         `${props.dynamodbTableArn}/index/*`
+      ]
+    }));
+
+    // DynamoDB 권한 추가 - 리포트 테이블 (새로 추가)
+    this.role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'dynamodb:PutItem',
+        'dynamodb:GetItem',
+        'dynamodb:Query',
+        'dynamodb:Scan',
+        'dynamodb:BatchGetItem',
+        'dynamodb:UpdateItem',
+        'dynamodb:DeleteItem'
+      ],
+      resources: [
+        props.reportsTableArn,
+        `${props.reportsTableArn}/index/*`
       ]
     }));
 

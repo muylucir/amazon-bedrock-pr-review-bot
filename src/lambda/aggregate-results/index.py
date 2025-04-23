@@ -58,6 +58,7 @@ class ResultAggregator:
         self.event_data = event_data
         self.dynamodb = boto3.resource('dynamodb')
         self.results_table = self.dynamodb.Table('PRReviewerResults')
+        self.reports_table = self.dynamodb.Table('PRReviewerReports')
         
         # 실행 ID 먼저 추출
         try:
@@ -172,25 +173,25 @@ class ResultAggregator:
                 KeyConditionExpression=boto3.dynamodb.conditions.Key('execution_id').eq(self.execution_id),
                 Limit=1
             )
-            
+
             if response.get('Items'):
                 pr_details = convert_decimal(response['Items'][0].get('pr_details', {}))
                 print(f"Extracted PR details: {json.dumps(pr_details, cls=DecimalEncoder)}")
                 return pr_details
-            
+
             # DynamoDB에서 정보를 찾지 못한 경우 입력 이벤트에서 직접 추출 시도
             if isinstance(self.event_data, dict):
                 pr_details = {}
                 if 'body' in self.event_data and 'pr_details' in self.event_data['body']:
                     pr_details = self.event_data['body']['pr_details']
-                
+
                 if pr_details:
                     print(f"Extracted PR details from event data: {json.dumps(pr_details, cls=DecimalEncoder)}")
                     return pr_details
-                
+
             print("Failed to extract PR details from DynamoDB or event data")
             return {}
-                
+
         except Exception as e:
             print(f"Error extracting PR details: {e}")
             return {}
@@ -864,6 +865,42 @@ class ResultAggregator:
             'persistent_issues': persistent_issues[:10]  # 상위 10개만 표시
         }
 
+    def store_report_in_dynamodb(self, markdown_report: str) -> bool:
+        """마크다운 보고서를 별도의 DynamoDB 테이블에 저장"""
+        try:
+            if not self.pr_details or 'repository' not in self.pr_details or 'pr_id' not in self.pr_details:
+                print("PR details missing, cannot store report")
+                return False
+
+            # 리포지토리 및 PR ID 정보 추출
+            repository = self.pr_details.get('repository')
+            pr_id = self.pr_details.get('pr_id')
+
+            timestamp = datetime.now().isoformat()
+
+            # 보고서 테이블에 저장
+            self.reports_table.put_item(
+                Item={
+                    'repository': repository,
+                    'pr_id': pr_id,
+                    'execution_id': self.execution_id,
+                    'timestamp': timestamp,
+                    'report': markdown_report,
+                    'title': self.pr_details.get('title', 'Unknown PR'),
+                    'author': self.pr_details.get('author', 'Unknown Author'),
+                    'base_branch': self.pr_details.get('base_branch', ''),
+                    'head_branch': self.pr_details.get('head_branch', ''),
+                    'pr_url': self.pr_details.get('pr_url', '')
+                }
+            )
+
+            print(f"Successfully stored report for PR {repository}/{pr_id}")
+            return True
+
+        except Exception as e:
+            print(f"Error storing report in DynamoDB: {e}")
+            return False
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """Lambda 핸들러"""
     try:
@@ -880,6 +917,9 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         slack_message = aggregator.prepare_slack_message(summary)
         
         execution_id = getattr(aggregator, 'execution_id', f"fallback-{int(datetime.now().timestamp())}")
+
+        report_stored = aggregator.store_report_in_dynamodb(markdown_report)
+        print(f"Report stored in reports table: {report_stored}")
         
         return {
             'statusCode': 200,

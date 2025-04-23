@@ -25,7 +25,8 @@ export class AmazonBedrockPrReviewbotStack extends cdk.Stack {
       secrets: secretsAndParams.secrets,
       region: this.region,
       account: this.account,
-      dynamodbTableArn: dynamodb.resultsTable.tableArn
+      dynamodbTableArn: dynamodb.resultsTable.tableArn,
+      reportsTableArn: dynamodb.reportsTable.tableArn // Added reports table ARN
     }).role;
 
     // Create Lambda Layers
@@ -67,6 +68,12 @@ export class AmazonBedrockPrReviewbotStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'DynamoDBTableName', {
       value: dynamodb.resultsTable.tableName,
       description: 'DynamoDB Table Name for PR Review results'
+    });
+
+    // Add output for reports table
+    new cdk.CfnOutput(this, 'ReportsTableName', {
+      value: dynamodb.reportsTable.tableName,
+      description: 'DynamoDB Table Name for PR Review reports'
     });
   }
 }
