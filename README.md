@@ -200,9 +200,19 @@ aws ssm put-parameter --name /pr-reviewer/config/repo_type --value <github | git
 
 봇은 자동으로 다음 작업을 수행합니다:
 1. 새로운 PR 또는 기존 PR 업데이트 검토
-2. Amazon Bedrock을 사용한 코드 변경 분석
-3. PR에 리뷰 코멘트 작성
-4. (Option) 설정된 Slack 채널로 요약 전송 (Slack 알림을 사용하려면 Parameter Store의 /pr-reviewer/config/slack_notification 값을 "enable"로 변경하고, Secret Manager의 /pr-reviewer/tokens/slack에 Token을 입력합니다.)
+2. 파일 간 관계 분석 및 관련 파일 그룹화
+3. Amazon Bedrock을 사용한 코드 변경 분석
+4. 이전 리뷰와 비교하여 개선 사항 추적
+5. PR에 상세한 리뷰 코멘트 작성
+6. (Option) 설정된 Slack 채널로 요약 전송
+
+```bash
+# Slack 알림 활성화
+aws ssm put-parameter --name /pr-reviewer/config/slack_notification --value "enable" --overwrite
+
+# 알림을 받을 채널 설정
+aws ssm put-parameter --name /pr-reviewer/config/slack_channel --value "your-channel-name" --overwrite
+```
 
 [샘플 Report 보기](https://github.com/muylucir/amazon-bedrock-pr-review-bot/blob/main/docs/sample_report.md)
 
