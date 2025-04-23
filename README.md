@@ -225,6 +225,16 @@ aws ssm put-parameter --name /pr-reviewer/config/slack_channel --value "your-cha
 
 저장된 데이터는 30일 후 TTL(Time-To-Live)에 의해 자동으로 삭제됩니다.
 
+## 마크다운 리포트 저장
+리뷰 마크다운 리포트는 별도의 DynamoDB 테이블(PRReviewerReports)에 저장됩니다:
+
+- 리포지토리와 PR ID로 쉽게 조회 가능
+- 보고서 내용, 제목, 작성자 등 PR 관련 메타데이터 함께 저장
+- 타임스탬프 기반 인덱스로 최신 리포트 조회 지원
+- 실행 ID 기반 인덱스로 특정 실행의 리포트 검색 가능
+
+
+이를 통해 PR 코드 리뷰 보고서의 이력을 쉽게 검색하고 관리할 수 있습니다.
 
 ## 모니터링
 
